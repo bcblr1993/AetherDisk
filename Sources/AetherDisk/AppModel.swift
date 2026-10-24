@@ -85,11 +85,13 @@ final class AppModel: ObservableObject {
         return node.allocated - old.allocated
     }
     func chooseFolder() {
+        guard !checking else { return }
         let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = false
         panel.prompt = "扫描此文件夹"; panel.message = "只读扫描文件大小；包含隐藏目录，不读取文件内容。"
         if panel.runModal() == .OK, let url = panel.url { start(url) }
     }
     func start(_ url: URL? = nil) {
+        guard !checking else { return }
         token.cancel(); worker?.cancel(); token = .init(); let thisToken = token
         generation = UUID(); let id = generation
         root = (url ?? root).standardizedFileURL; let scope = root
@@ -114,7 +116,7 @@ final class AppModel: ObservableObject {
             case .success(let value):
                 self.result = value; self.fresh = !value.cancelled
                 self.selectedPath = value.nodes.first { $0.parent == scope.path }?.path
-                if !value.cancelled { self.saveSnapshot(value) }
+                if value.complete { self.saveSnapshot(value) }
             case .failure(let error): self.message = error.localizedDescription
             }
             self.volume = .read(at: scope)
@@ -136,7 +138,7 @@ final class AppModel: ObservableObject {
         }
     }
     func confirm() {
-        guard let plan else { return }
+        guard let plan, fresh, !scanning, !checking else { return }
         self.plan = nil; checking = true
         Task {
             do {

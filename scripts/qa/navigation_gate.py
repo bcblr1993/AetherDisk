@@ -4,6 +4,8 @@ def check(n,ok):
  checks.append({'name':n,'passed':bool(ok)});print(n,ok,flush=True);(OUT/'vm-navigation-gate.json').write_text(json.dumps(checks,ensure_ascii=False,indent=2));assert ok,n
 def dump(n):
  s=ax();(OUT/('ui-'+n+'.txt')).write_text(s);return s
+# A partial scan must not replace a trustworthy complete comparison baseline.
+py("import os;os.chmod("+repr(ROOT+'/Restricted')+",0o700)")
 launch()
 # History from actual metadata changes, including removed directories.
 py("from pathlib import Path\nr=Path("+repr(ROOT)+")\n(r/'Documents/growth.data').write_bytes(b'g'*2*1024*1024)\n(r/'Removed').mkdir(exist_ok=True)\n(r/'Removed/value.data').write_bytes(b'r'*8192)")
@@ -11,6 +13,11 @@ press('scan');time.sleep(1)
 py("from pathlib import Path\nimport shutil\nr=Path("+repr(ROOT)+")\n(r/'Documents/growth.data').write_bytes(b'g'*4*1024*1024)\nshutil.rmtree(r/'Removed')")
 press('scan');time.sleep(1);press('nav-changes');s=dump('history')
 check('history includes growth and removed folder','Documents' in s and '+2.0 MiB' in s and 'Removed' in s and '−8.0 KiB' in s)
+py("import os;os.chmod("+repr(ROOT+'/Restricted')+",0)")
+snapshot_path = py("from pathlib import Path;import hashlib;print(Path.home()/'Library/Application Support/AetherDisk/Scans'/(hashlib.sha256("+repr(ROOT)+".encode()).digest()[:12].hex()+'.json'))")
+baseline = remote('shasum -a 256 '+shlex.quote(snapshot_path))
+press('scan');time.sleep(1)
+check('partial scan does not overwrite complete history',baseline == remote('shasum -a 256 '+shlex.quote(snapshot_path)))
 press('设置与应用更新');s=dump('settings')
 check('production updater ready','更新检查已就绪' in s and '自动检查更新' in s and '检查更新…' in s)
 
