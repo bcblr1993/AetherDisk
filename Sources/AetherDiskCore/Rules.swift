@@ -26,6 +26,7 @@ public enum RuleCatalog {
         if directory && ["app", "xcarchive"].contains((n as NSString).pathExtension) { flags.insert(.installer) }
         if !directory {
             let ext = (n as NSString).pathExtension
+            if ["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "pages", "numbers", "keynote", "csv", "md", "rtf", "epub"].contains(ext) { flags.insert(.document) }
             if ["dmg", "pkg", "ipa", "apk", "aab", "zip", "gz", "xz", "tar", "7z", "rar", "deb", "rpm", "exe", "msi", "msix", "msixbundle", "appimage", "jar", "war", "whl", "bz2", "zst", "uf2", "hex"].contains(ext) || n.contains("sha256sums") || n == "appcast.xml" { flags.insert(.installer) }
             if ["swift", "rs", "c", "h", "cpp", "m", "mm", "py", "js", "ts", "tsx", "vue", "astro", "dart", "java", "kt", "sh", "go", "rb", "sql", "lua", "pl", "ps1", "bat", "cs", "fs", "cc", "cxx", "hpp", "hxx", "asm", "zig", "ex", "exs", "erl", "clj", "hs", "r", "jl", "ipynb", "html", "css", "scss", "svelte"].contains(ext) || ["cargo.toml", "package.json", "pom.xml", "project.yml", "pubspec.yaml", "agents.md"].contains(n) { flags.insert(.source) }
         }

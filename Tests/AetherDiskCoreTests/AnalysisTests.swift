@@ -95,4 +95,11 @@ final class AnalysisTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(UserProtection.overlaps("/home/Cafe\u{301}/child", protectedPaths: ["/home/Café"]))
     }
 
+    func testExportedReportsAndDocumentsBlockCacheCleanup() throws {
+        for ext in ["csv", "pdf", "md", "docx"] {
+            let cache = try file("Home/Library/Caches/Report-\(ext)/AetherDisk-report.\(ext)").deletingLastPathComponent()
+            XCTAssertThrowsError(try SafetyInspector.inspect(cache, home: root.appendingPathComponent("Home")))
+        }
+    }
+
 }

@@ -18,10 +18,10 @@ public struct DiskNode: Identifiable, Codable, Sendable, Equatable {
     }
 }
 public enum Protection: String, Codable, Sendable, CaseIterable {
-    case source, git, installer, credentials, symlink, incomplete, user
+    case source, git, installer, credentials, symlink, incomplete, user, document
     public var title: String {
         switch self {
-        case .user: "自定义保护"; case .source: "含源码"; case .git: "Git 工作树"; case .installer: "安装包 / 发布归档"
+        case .document: "文档与扫描报告"; case .user: "自定义保护"; case .source: "含源码"; case .git: "Git 工作树"; case .installer: "安装包 / 发布归档"
         case .credentials: "凭据或个人数据"; case .symlink: "符号链接"; case .incomplete: "扫描不完整"
         }
     }

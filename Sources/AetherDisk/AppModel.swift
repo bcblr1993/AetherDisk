@@ -56,7 +56,7 @@ final class AppModel: ObservableObject {
     }
     func exportReport() {
         guard let result, !scanning, !exporting else { return }
-        let panel = NSSavePanel(); panel.allowedContentTypes = [.commaSeparatedText]
+        let panel = NSSavePanel(); panel.directoryURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first; panel.allowedContentTypes = [.commaSeparatedText]
         panel.nameFieldStringValue = "AetherDisk-扫描报告.csv"; panel.message = "导出元数据、保留的目录样本、大文件、类型汇总与未读取路径，不读取或导出文件内容。"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         exporting = true; let paths = protectedPaths
