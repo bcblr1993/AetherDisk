@@ -15,6 +15,7 @@ final class AppUpdater: ObservableObject {
     private var controller: SPUStandardUpdaterController?
     private var observation: AnyCancellable?
     var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0" }
+    var releaseLabel: String { Bundle.main.object(forInfoDictionaryKey: "AetherDiskRelease") as? Bool == true ? "正式版" : "开发预览" }
     init() {
         let config = UpdateConfiguration(feed: Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String ?? "", publicKey: Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String ?? "")
         guard config.valid else { return }

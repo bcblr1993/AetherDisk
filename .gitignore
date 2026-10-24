@@ -9,3 +9,5 @@ outputs/
 *.pem
 *.key
 Config/Signing.json
+
+__pycache__/

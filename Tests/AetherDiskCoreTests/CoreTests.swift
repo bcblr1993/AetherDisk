@@ -153,4 +153,30 @@ final class CoreTests: XCTestCase, @unchecked Sendable {
         for url in ["http://example.com/feed", "file:///tmp/feed", "https://user:pass@example.com/feed", "https://example.com/feed#fragment", ""] { XCTAssertFalse(UpdateConfiguration(feed: url, publicKey: key).valid) }
         XCTAssertFalse(UpdateConfiguration(feed: "https://example.com/feed", publicKey: "fake").valid)
     }
+    func testUnreadableSubfolderProducesExplicitPartialResult() throws {
+        try file("Home/Readable/data"); let protected = try file("Home/Restricted/data").deletingLastPathComponent()
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: protected.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: protected.path) }
+        let result = try DiskScanner.scan(root: home)
+        XCTAssertEqual(result.unreadable, 1); XCTAssertFalse(result.complete)
+        XCTAssertTrue(result.issues.contains(protected.path)); XCTAssertEqual(result.files, 1)
+    }
+    func testSymlinkInsideCacheBlocksCleanup() throws {
+        let c = try cache(); let external = try file("Outside/data")
+        try FileManager.default.createSymbolicLink(at: c.appendingPathComponent("link"), withDestinationURL: external)
+        XCTAssertThrowsError(try SafetyInspector.inspect(c, home: home))
+    }
+    func testBackupAndApplicationBundlesAreProtected() throws {
+        for name in ["Backup", "xwechat_files", "Saved.app", "Release.xcarchive", ".ssh"] {
+            let c = try cache(name)
+            try file("Home/Library/Caches/\(name)/\(name)/data")
+            XCTAssertThrowsError(try SafetyInspector.inspect(c, home: home), name)
+        }
+    }
+    func testEmptyFolderAndMissingRoot() throws {
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        let r = try DiskScanner.scan(root: home); XCTAssertEqual(r.files, 0); XCTAssertTrue(r.complete)
+        XCTAssertThrowsError(try DiskScanner.scan(root: root.appendingPathComponent("missing")))
+    }
+
 }

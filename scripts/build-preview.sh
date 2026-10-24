@@ -15,7 +15,7 @@ cp "$BIN/AetherDisk" "$APP/Contents/MacOS/AetherDisk"
 cp "$BIN/aetherdisk-scan" "$APP/Contents/MacOS/aetherdisk-scan"
 FRAMEWORK="$ROOT/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
 /usr/bin/ditto "$FRAMEWORK" "$APP/Contents/Frameworks/Sparkle.framework"
-APP_OUTPUT="$APP" AETHERDISK_VERSION="$(cat VERSION)" python3 - <<'PY'
+APP_OUTPUT="$APP" AETHERDISK_VERSION="${AETHERDISK_VERSION:-$(cat VERSION)}" python3 - <<'PY'
 import os,plistlib,base64,urllib.parse
 from pathlib import Path
 app=Path(os.environ['APP_OUTPUT'])
@@ -24,7 +24,7 @@ if feed or key:
  u=urllib.parse.urlsplit(feed)
  assert u.scheme=='https' and u.hostname and not u.username and not u.password and not u.fragment
  assert len(base64.b64decode(key,validate=True))==32
-info={'CFBundleExecutable':'AetherDisk','CFBundleIdentifier':'com.aethernative.AetherDisk','CFBundleName':'AetherDisk','CFBundleDisplayName':'AetherDisk','CFBundlePackageType':'APPL','CFBundleShortVersionString':os.environ['AETHERDISK_VERSION'],'CFBundleVersion':'2026102401','LSMinimumSystemVersion':'14.0','NSHighResolutionCapable':True,'CFBundleLocalizations':['zh-Hans','en'],'NSPrincipalClass':'NSApplication','NSHumanReadableCopyright':'© 2026 AetherNative','SUEnableAutomaticChecks':bool(feed),'SUSendProfileInfo':False,'SUAutomaticallyUpdate':False,'SUAllowsAutomaticUpdates':False,'SUScheduledCheckInterval':86400,'SURequireSignedFeed':True,'SUVerifyUpdateBeforeExtraction':True,'CFBundleIconFile':'AppIcon'}
+info={'CFBundleExecutable':'AetherDisk','CFBundleIdentifier':'com.aethernative.AetherDisk','CFBundleName':'AetherDisk','CFBundleDisplayName':'AetherDisk','CFBundlePackageType':'APPL','CFBundleShortVersionString':os.environ['AETHERDISK_VERSION'],'CFBundleVersion':os.environ.get('AETHERDISK_BUILD','2026102403'),'LSMinimumSystemVersion':'14.0','NSHighResolutionCapable':True,'CFBundleLocalizations':['zh-Hans','en'],'NSPrincipalClass':'NSApplication','NSHumanReadableCopyright':'© 2026 AetherNative','SUEnableAutomaticChecks':bool(feed),'SUSendProfileInfo':False,'SUAutomaticallyUpdate':False,'SUAllowsAutomaticUpdates':False,'SUScheduledCheckInterval':86400,'SURequireSignedFeed':True,'SUVerifyUpdateBeforeExtraction':True,'CFBundleIconFile':'AppIcon','AetherDiskRelease':os.environ.get('AETHERDISK_RELEASE')=='1','LSApplicationCategoryType':'public.app-category.utilities'}
 if feed:info.update(SUFeedURL=feed,SUPublicEDKey=key)
 (app/'Contents/Info.plist').write_bytes(plistlib.dumps(info))
 PY

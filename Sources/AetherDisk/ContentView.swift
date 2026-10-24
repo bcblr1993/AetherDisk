@@ -50,7 +50,7 @@ struct ContentView: View {
                 HStack(spacing: 7) { Image(systemName: "lock.shield").foregroundStyle(DiskTheme.accent); Text("文件留在你的 Mac").font(.system(size: 11, weight: .medium)) }
                 Text("本机分析 · 确认后清理\n源码与安装包默认保护").font(.system(size: 10)).foregroundStyle(.secondary).lineSpacing(4)
                 Divider().padding(.vertical, 3)
-                HStack { Text("\(updater.version) · 开发预览").font(.system(size: 10)).foregroundStyle(.tertiary); Spacer(); Button { model.page = "settings" } label: { Image(systemName: "gearshape").font(.system(size: 13)) }.buttonStyle(.plain).help("设置与应用更新") }
+                HStack { Text("\(updater.version) · \(updater.releaseLabel)").font(.system(size: 10)).foregroundStyle(.tertiary); Spacer(); Button { model.page = "settings" } label: { Image(systemName: "gearshape").font(.system(size: 13)) }.buttonStyle(.plain).help("设置与应用更新") }
             }.padding(.horizontal, 10)
         }.padding(.horizontal, 14).padding(.top, 50).padding(.bottom, 20).background(.regularMaterial)
     }

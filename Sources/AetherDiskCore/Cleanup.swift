@@ -40,8 +40,8 @@ public enum SafetyInspector {
         let root = url.standardizedFileURL
         guard root.path != home.path, root.path.hasPrefix(home.path + "/"), root.resolvingSymlinksInPath().path == root.path else { throw CleanupError.refused("只处理个人文件夹内的真实缓存目录；不处理链接、磁盘根目录或外部卷。") }
         guard RuleCatalog.category(for: root, home: home) != nil else { throw CleanupError.refused("不在已识别的缓存规则中，仅支持查看。") }
-        let fm = FileManager(); var own = stat()
-        guard lstat(root.path, &own) == 0, (own.st_mode & S_IFMT) == S_IFDIR else { throw CleanupError.changed }
+        let fm = FileManager(); var own = stat(); var homeInfo = stat()
+        guard lstat(home.path, &homeInfo) == 0, lstat(root.path, &own) == 0, own.st_dev == homeInfo.st_dev, (own.st_mode & S_IFMT) == S_IFDIR else { throw CleanupError.changed }
         var all: [String] = []; var allocated: Int64 = 0; var files = 0
         func walk(_ path: URL) throws {
             var st = stat()

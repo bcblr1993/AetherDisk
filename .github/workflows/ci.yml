@@ -1,0 +1,15 @@
+name: macOS validation
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Core behavior and cleanup safety
+        run: swift test --jobs 4
+      - name: Release compilation
+        run: swift build -c release --jobs 4
+      - name: Packaging script syntax
+        run: bash -n scripts/build-preview.sh scripts/release.sh scripts/generate-appcast.sh
