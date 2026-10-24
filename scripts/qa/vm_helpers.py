@@ -20,6 +20,6 @@ def launch(app='AetherDisk.app',page='overview',shot=None):
  remote(' '.join(map(shlex.quote,args)));time.sleep(2)
 def press(target):
  result=ax('press',target)
- assert result=='0' or (result=='-25204' and target in ['选择文件夹','检查更新…']),(target,result)
+ assert result=='0' or (result=='-25204' and target in ['选择文件夹','检查更新…','安装并重启应用']),(target,result)
  time.sleep(.7)
 def osa(source):return subprocess.run(SSH+['osascript -'],input=source,text=True,capture_output=True,check=True,timeout=55).stdout.strip()

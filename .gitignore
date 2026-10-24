@@ -11,3 +11,5 @@ outputs/
 Config/Signing.json
 
 __pycache__/
+
+.wrangler/

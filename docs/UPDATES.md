@@ -15,7 +15,7 @@
 1. 明确官网 AetherDisk 产品页、下载与 Feed 托管路径。使用 `/apps/aetherdisk/appcast.xml`，官网采用 mirror 模式逐字节提供签名 Feed。
 2. 用 Sparkle 官方工具为 AetherDisk 建立独立发布签名身份，私钥仅在发布者钥匙串保存。不得复用其他产品私钥，不得写入仓库。
 3. 构建配置注入 `AETHERDISK_UPDATE_FEED` 与 `AETHERDISK_UPDATE_PUBLIC_KEY`。公钥从发布签名身份导出，不能使用演示值。
-4. 用 Developer ID 按内层工具、XPC、Updater、Sparkle framework、主应用顺序签名并开启 Hardened Runtime。当前 build-preview.sh 仅为 ad-hoc 开发签名，不是正式发布脚本。
+4. 用 Developer ID 按内层工具、XPC、Updater、Sparkle framework、主应用顺序签名并开启 Hardened Runtime。build-preview.sh 负责组装开发包，scripts/release.sh 负责逐层正式签名、公证与 DMG 打包。
 5. 完成 Apple 公证、staple、Gatekeeper 与干净 VM 验收。
 6. 在包含正式 `AetherDisk.app` 的新发布目录中执行 `scripts/generate-appcast.sh`。脚本要求公证 DMG、HTTPS 下载前缀和已配置签名的 App，读取钥匙串账户 AetherDisk；不会自动生成或导出私钥。
 7. 发布签名 Feed 与最终 DMG。不得在签名之后编辑 Feed。

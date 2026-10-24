@@ -8,7 +8,11 @@ func get(_ e:AXUIElement,_ name:String)->CFTypeRef? { var v:CFTypeRef?;return AX
 func text(_ e:AXUIElement,_ name:String)->String { get(e,name).map{String(describing:$0)} ?? "" }
 func walk(_ e:AXUIElement,_ depth:Int=0)->[AXUIElement] { if depth>25{return []};return [e]+((get(e,kAXChildrenAttribute) as? [AXUIElement]) ?? []).flatMap{walk($0,depth+1)} }
 let nodes=walk(root)
-if args.count<2 || args[1]=="dump" {
+if args.count>1 && args[1]=="windows" {
+ for row in (CGWindowListCopyWindowInfo(.optionOnScreenOnly,kCGNullWindowID) as? [[String:Any]]) ?? [] where row[kCGWindowOwnerPID as String] as? Int32 == app.processIdentifier {
+  print("\(row[kCGWindowNumber as String] ?? 0) | \(row[kCGWindowName as String] ?? "")")
+ }
+} else if args.count<2 || args[1]=="dump" {
  for e in nodes { print([text(e,kAXRoleAttribute),text(e,kAXTitleAttribute),text(e,kAXDescriptionAttribute),text(e,kAXValueAttribute),text(e,kAXIdentifierAttribute),text(e,kAXEnabledAttribute)].joined(separator:" | ")) }
 } else if args[1]=="press" {
  let target=args[2]
