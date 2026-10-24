@@ -16,7 +16,7 @@ if args.count>1 && args[1]=="windows" {
  for e in nodes { print([text(e,kAXRoleAttribute),text(e,kAXTitleAttribute),text(e,kAXDescriptionAttribute),text(e,kAXValueAttribute),text(e,kAXIdentifierAttribute),text(e,kAXEnabledAttribute)].joined(separator:" | ")) }
 } else if args[1]=="press" {
  let target=args[2]
- guard let e=nodes.first(where:{text($0,kAXIdentifierAttribute)==target || text($0,kAXTitleAttribute)==target || text($0,kAXDescriptionAttribute)==target || text($0,kAXHelpAttribute)==target}) else {fatalError("Missing control: \(target)")}
+ guard let e=nodes.first(where:{ ["AXButton","AXCheckBox","AXRadioButton","AXPopUpButton","AXMenuItem"].contains(text($0,kAXRoleAttribute)) && (text($0,kAXIdentifierAttribute)==target || text($0,kAXTitleAttribute)==target || text($0,kAXDescriptionAttribute)==target || text($0,kAXHelpAttribute)==target || text($0,kAXValueAttribute)==target) }) else {fatalError("Missing control: \(target)")}
  print(AXUIElementPerformAction(e,kAXPressAction as CFString).rawValue)
 } else if args[1]=="focus" {
  app.activate(); usleep(300_000)

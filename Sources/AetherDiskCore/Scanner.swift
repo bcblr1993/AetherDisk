@@ -18,7 +18,7 @@ private final class ScanWorker {
     let progress: @Sendable (ScanProgress) -> Void
     let fm = FileManager(); var device: dev_t = 0
     var files = 0; var directories = 0; var allocated: Int64 = 0; var unreadable = 0
-    var issues: [String] = []; var nodes: [DiskNode] = []; var largeFiles: [DiskNode] = []
+    var issues: [String] = []; var nodes: [DiskNode] = []; var analysis = AnalysisAccumulator()
     var hardLinks: Set<String> = []; var lastUpdate = Date.distantPast; var completedRoots: [DiskNode] = []
     init(root: URL, home: URL, cancellation: ScanCancellation, progress: @escaping @Sendable (ScanProgress) -> Void) {
         self.root = root; self.home = home; self.cancellation = cancellation; self.progress = progress
@@ -33,9 +33,11 @@ private final class ScanWorker {
         guard fm.isReadableFile(atPath: root.path), (try? fm.contentsOfDirectory(atPath: root.path)) != nil else { throw ScanFailure.unreadableRoot(root.path) }
         device = st.st_dev; let started = Date()
         let node = visit(root, depth: 0)
-        nodes.append(contentsOf: largeFiles.sorted { $0.allocated > $1.allocated }.prefix(200))
+        let details = analysis.result()
+        let storedPaths = Set(nodes.map(\.path))
+        nodes.append(contentsOf: details.largeFiles.filter { !storedPaths.contains($0.path) })
         progress(.init(files: files, directories: directories, allocated: node.allocated, currentPath: root.path))
-        return .init(root: root.path, scannedAt: Date(), duration: Date().timeIntervalSince(started), allocated: node.allocated, logical: node.logical, files: files, directories: directories, unreadable: unreadable, issues: issues, nodes: nodes.sorted { $0.allocated > $1.allocated }, recommendations: RuleCatalog.recommendations(nodes: nodes, home: home), cancelled: cancellation.isCancelled)
+        return .init(root: root.path, scannedAt: Date(), duration: Date().timeIntervalSince(started), allocated: node.allocated, logical: node.logical, files: files, directories: directories, unreadable: unreadable, issues: issues, nodes: nodes.sorted { $0.allocated > $1.allocated }, recommendations: RuleCatalog.recommendations(nodes: nodes, home: home), cancelled: cancellation.isCancelled, analysis: details)
     }
     func publish(_ path: String) {
         lastUpdate = Date()
@@ -61,10 +63,7 @@ private final class ScanWorker {
             }
             node.allocated = Int64(st.st_blocks) * 512; node.logical = Int64(st.st_size); allocated += node.allocated
             if depth <= 3 && nodes.count < 20_000 { nodes.append(node) }
-            if depth > 3 && node.allocated >= 16 * 1024 * 1024 {
-                largeFiles.append(node)
-                if largeFiles.count > 400 { largeFiles.sort { $0.allocated > $1.allocated }; largeFiles = Array(largeFiles.prefix(200)) }
-            }
+            analysis.record(node)
         } else {
             directories += 1
             guard depth < 256 else { note(url.path); node.protection.insert(.incomplete); return node }

@@ -1,10 +1,18 @@
 import SwiftUI
 import AppKit
 import CryptoKit
+import UniformTypeIdentifiers
 import AetherDiskCore
 
 @MainActor
 final class AppModel: ObservableObject {
+    @Published var protectedPaths = UserDefaults.standard.stringArray(forKey: "ProtectedPaths") ?? []
+    @Published var largeQuery = ""
+    @Published var largeCategory: FileCategory?
+    @Published var largeMinimum: Int64 = 100 * 1024 * 1024
+    @Published var largeBasis: SizeBasis = .allocated
+    @Published var showIssues = false
+    @Published var exporting = false
     @Published var page = "overview"
     @Published var root = FileManager.default.homeDirectoryForCurrentUser
     @Published var result: ScanResult?
@@ -23,10 +31,46 @@ final class AppModel: ObservableObject {
     private var generation = UUID()
     private let cleanup = CleanupService()
     private var worker: Task<Void, Never>?
-    var recommendations: [Recommendation] { result?.recommendations ?? [] }
+    var recommendations: [Recommendation] {
+        (result?.recommendations ?? []).map { r in var value = r; value.node = UserProtection.apply(r.node, paths: protectedPaths); return value }
+    }
+    var largeFiles: [DiskNode] { LargeFileQuery.rows(result?.analysis?.largeFiles ?? [], query: largeQuery, category: largeCategory, minimum: largeMinimum, basis: largeBasis).map { UserProtection.apply($0, paths: protectedPaths) } }
+    func protectedNode(_ node: DiskNode) -> DiskNode { UserProtection.apply(node, paths: protectedPaths) }
+    func addProtection(_ path: String) {
+        guard !checking, protectedPaths.count < 50 else { return }
+        let value = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
+        if !protectedPaths.contains(value) { protectedPaths.append(value); protectedPaths.sort(); persistProtection() }
+    }
+    func removeProtection(_ path: String) {
+        guard !checking else { return }; protectedPaths.removeAll { $0 == path }; persistProtection()
+    }
+    private func persistProtection() {
+        UserDefaults.standard.set(protectedPaths, forKey: "ProtectedPaths")
+        plan = nil; selectedCaches = []
+    }
+    func chooseProtectedFolder() {
+        guard !checking else { return }
+        let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false
+        panel.prompt = "保护此目录"; panel.message = "继续统计占用，但禁止清理该目录、内部文件及包含它的缓存父目录。"
+        if panel.runModal() == .OK, let url = panel.url { addProtection(url.path) }
+    }
+    func exportReport() {
+        guard let result, !scanning, !exporting else { return }
+        let panel = NSSavePanel(); panel.allowedContentTypes = [.commaSeparatedText]
+        panel.nameFieldStringValue = "AetherDisk-扫描报告.csv"; panel.message = "导出元数据、保留的目录样本、大文件、类型汇总与未读取路径，不读取或导出文件内容。"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        exporting = true; let paths = protectedPaths
+        Task {
+            do {
+                try await Task.detached(priority: .utility) { try ScanReport.csv(result, protectedPaths: paths).write(to: url, atomically: true, encoding: .utf8) }.value
+                message = "扫描报告已保存：\(url.path)"
+            } catch { message = "导出失败：\(error.localizedDescription)" }
+            exporting = false
+        }
+    }
     var eligible: [Recommendation] { recommendations.filter { !$0.blocked } }
     var eligibleBytes: Int64 { eligible.reduce(0) { $0 + $1.node.allocated } }
-    var selectedNode: DiskNode? { result?.nodes.first { $0.path == selectedPath } ?? progress.rootNodes.first { $0.path == selectedPath } }
+    var selectedNode: DiskNode? { (result?.nodes.first { $0.path == selectedPath } ?? progress.rootNodes.first { $0.path == selectedPath }).map(protectedNode) }
     var rows: [DiskNode] {
         let scope = result?.root ?? root.path
         let items = (result?.nodes ?? progress.rootNodes).filter { $0.parent == scope && $0.path != scope }
@@ -49,6 +93,7 @@ final class AppModel: ObservableObject {
         token.cancel(); worker?.cancel(); token = .init(); let thisToken = token
         generation = UUID(); let id = generation
         root = (url ?? root).standardizedFileURL; let scope = root
+        query = ""; plan = nil; showIssues = false
         volume = .read(at: root); previous = loadSnapshot(root: root)
         result = nil; scanning = true; fresh = false; selectedCaches = []; selectedPath = nil; message = nil; progress = .init()
         let updateHandler: @Sendable (ScanProgress) -> Void = { [weak self] update in
@@ -85,7 +130,7 @@ final class AppModel: ObservableObject {
         let chosen = paths ?? Array(selectedCaches)
         checking = true; message = nil
         Task {
-            do { plan = try await cleanup.prepare(paths: chosen) }
+            do { plan = try await cleanup.prepare(paths: chosen, protectedPaths: protectedPaths) }
             catch { message = error.localizedDescription }
             checking = false
         }
@@ -95,7 +140,7 @@ final class AppModel: ObservableObject {
         self.plan = nil; checking = true
         Task {
             do {
-                let receipt = try await cleanup.execute(confirmedPlanID: plan.id)
+                let receipt = try await cleanup.execute(confirmedPlanID: plan.id, protectedPaths: protectedPaths)
                 let text = "已移入废纸篓 \(receipt.moved.count) 项。可用空间变化 \(receipt.freeSpaceChange < 0 ? "−" : "+")\(DiskFormat.bytes(receipt.freeSpaceChange))。清空废纸篓后才会释放文件占用。"
                 message = receipt.failed.isEmpty ? text : text + "\n未完成：" + receipt.failed.joined(separator: "\n")
                 fresh = false; selectedCaches = []; volume = .read(at: root)

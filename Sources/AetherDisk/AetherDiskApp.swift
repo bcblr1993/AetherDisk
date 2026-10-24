@@ -20,9 +20,9 @@ struct AetherDiskApp: App {
         .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(after: .appInfo) { Button("检查更新…") { updater.check() }.disabled(updater.ready && !updater.canCheck) }
-            CommandGroup(after: .newItem) { Button("选择扫描文件夹…") { model.chooseFolder() }.keyboardShortcut("o"); Button("重新扫描") { model.start() }.keyboardShortcut("r").disabled(model.scanning); Button("停止扫描") { model.cancel() }.disabled(!model.scanning) }
+            CommandGroup(after: .newItem) { Button("选择扫描文件夹…") { model.chooseFolder() }.keyboardShortcut("o"); Button("重新扫描") { model.start() }.keyboardShortcut("r").disabled(model.scanning); Button("导出扫描报告…") { model.exportReport() }.disabled(model.result == nil || model.scanning || model.exporting); Button("停止扫描") { model.cancel() }.disabled(!model.scanning) }
         }
-        Settings { DiskSettings(updater: updater) }
+        Settings { ScrollView { DiskSettings(updater: updater, model: model) }.frame(width: 550, height: 620) }
     }
     @MainActor private func runQAIfRequested() async {
         let args = CommandLine.arguments

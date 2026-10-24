@@ -18,10 +18,10 @@ public struct DiskNode: Identifiable, Codable, Sendable, Equatable {
     }
 }
 public enum Protection: String, Codable, Sendable, CaseIterable {
-    case source, git, installer, credentials, symlink, incomplete
+    case source, git, installer, credentials, symlink, incomplete, user
     public var title: String {
         switch self {
-        case .source: "含源码"; case .git: "Git 工作树"; case .installer: "安装包 / 发布归档"
+        case .user: "自定义保护"; case .source: "含源码"; case .git: "Git 工作树"; case .installer: "安装包 / 发布归档"
         case .credentials: "凭据或个人数据"; case .symlink: "符号链接"; case .incomplete: "扫描不完整"
         }
     }
@@ -71,6 +71,7 @@ public struct ScanResult: Codable, Sendable {
     public var nodes: [DiskNode]
     public var recommendations: [Recommendation]
     public var cancelled: Bool
+    public var analysis: ScanAnalysis? = nil
     public var complete: Bool { !cancelled && unreadable == 0 }
 }
 public struct VolumeSpace: Sendable {

@@ -18,9 +18,11 @@ struct ContentView: View {
                                 .padding(12).background(DiskTheme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
                         }
                         switch model.page {
+                        case "large": LargeFilesPage(model: model)
+                        case "types": FileTypesPage(model: model)
                         case "suggestions": suggestionsPage
                         case "changes": changesPage
-                        case "settings": DiskSettings(updater: updater)
+                        case "settings": DiskSettings(updater: updater, model: model)
                         default: overview
                         }
                     }.padding(20)
@@ -31,15 +33,18 @@ struct ContentView: View {
         .background(DiskTheme.background).tint(DiskTheme.accent)
         .frame(minWidth: 1080, minHeight: 700)
         .sheet(item: $model.plan) { plan in confirmation(plan) }
+        .sheet(isPresented: $model.showIssues) { ScanIssuesView(model: model) }
     }
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) { BrandMark(size: 35); VStack(alignment: .leading, spacing: 3) { Text("AetherDisk").font(.system(size: 17, weight: .semibold)); Text("看清每一寸空间").font(.system(size: 10)).foregroundStyle(.secondary) } }.padding(.bottom, 30)
+            HStack(spacing: 10) { BrandMark(size: 35); VStack(alignment: .leading, spacing: 3) { Text("AetherDisk").font(.system(size: 17, weight: .semibold)); Text("看清每一寸空间").font(.system(size: 10)).foregroundStyle(.secondary) } }.padding(.bottom, 20)
             Text("工作空间").font(.system(size: 10, weight: .medium)).foregroundStyle(.tertiary).padding(.horizontal, 10).padding(.bottom, 8)
             nav("overview", "磁盘概览", "square.grid.2x2")
+            nav("large", "大文件", "doc.text.magnifyingglass")
+            nav("types", "文件类型", "chart.bar.xaxis")
             nav("suggestions", "清理建议", "sparkles", count: model.recommendations.count)
             nav("changes", "占用变化", "chart.line.uptrend.xyaxis")
-            Text("快速扫描").font(.system(size: 10, weight: .medium)).foregroundStyle(.tertiary).padding(.horizontal, 10).padding(.top, 28).padding(.bottom, 8)
+            Text("快速扫描").font(.system(size: 10, weight: .medium)).foregroundStyle(.tertiary).padding(.horizontal, 10).padding(.top, 18).padding(.bottom, 8)
             location("个人文件夹", "house", FileManager.default.homeDirectoryForCurrentUser)
             location("下载", "arrow.down.circle", FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads"))
             location("文稿", "doc.text", FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents"))
@@ -52,12 +57,12 @@ struct ContentView: View {
                 Divider().padding(.vertical, 3)
                 HStack { Text("\(updater.version) · \(updater.releaseLabel)").font(.system(size: 10)).foregroundStyle(.tertiary); Spacer(); Button { model.page = "settings" } label: { Image(systemName: "gearshape").font(.system(size: 13)) }.buttonStyle(.plain).help("设置与应用更新") }
             }.padding(.horizontal, 10)
-        }.padding(.horizontal, 14).padding(.top, 50).padding(.bottom, 20).background(.regularMaterial)
+        }.padding(.horizontal, 14).padding(.top, 34).padding(.bottom, 16).background(.regularMaterial)
     }
     private func nav(_ id: String, _ title: String, _ icon: String, count: Int = 0) -> some View {
         Button { model.page = id } label: {
             HStack(spacing: 10) { Image(systemName: icon).frame(width: 17); Text(title); Spacer(); if count > 0 { Text("\(count)").font(.system(size: 10, weight: .medium)).padding(.horizontal, 6).padding(.vertical, 2).background(DiskTheme.accent.opacity(0.1), in: Capsule()) } }
-                .font(.system(size: 12, weight: model.page == id ? .semibold : .regular)).padding(.horizontal, 10).padding(.vertical, 10)
+                .font(.system(size: 12, weight: model.page == id ? .semibold : .regular)).padding(.horizontal, 10).padding(.vertical, 8)
                 .foregroundStyle(model.page == id ? DiskTheme.accent : Color.secondary)
                 .background(model.page == id ? DiskTheme.accent.opacity(0.1) : .clear, in: RoundedRectangle(cornerRadius: 9))
         }.buttonStyle(.plain).accessibilityIdentifier("nav-" + id)
@@ -68,10 +73,11 @@ struct ContentView: View {
     private var header: some View {
         HStack {
             VStack(alignment: .leading, spacing: 6) {
-                Text(model.page == "settings" ? "设置与更新" : model.page == "suggestions" ? "让空间，轻一点。" : model.page == "changes" ? "变化，有迹可循。" : "磁盘空间，一目了然。").font(.system(size: 24, weight: .semibold))
+                Text(model.page == "large" ? "大文件，直接找到。" : model.page == "types" ? "空间，都用在哪。" : model.page == "settings" ? "设置与更新" : model.page == "suggestions" ? "让空间，轻一点。" : model.page == "changes" ? "变化，有迹可循。" : "磁盘空间，一目了然。").font(.system(size: 24, weight: .semibold))
                 HStack(spacing: 6) { Image(systemName: "internaldrive"); Text(DiskFormat.compactPath(model.root.path)).lineLimit(1).truncationMode(.middle) }.font(.system(size: 11)).foregroundStyle(.secondary).help(model.root.path)
             }
             Spacer(minLength: 16)
+            Button { model.exportReport() } label: { Image(systemName: "square.and.arrow.up") }.help("导出扫描报告").accessibilityLabel("导出扫描报告").disabled(model.result == nil || model.scanning || model.exporting)
             Button { model.chooseFolder() } label: { Label("选择文件夹", systemImage: "folder") }.controlSize(.regular).disabled(model.checking)
             if model.scanning {
                 Button("停止扫描", role: .cancel) { model.cancel() }.controlSize(.regular)
@@ -99,7 +105,7 @@ struct ContentView: View {
                             HStack { Text("文件夹 / 文件"); Spacer(); Text("占用 / 比例") }.font(.system(size: 10)).foregroundStyle(.tertiary)
                             if model.rows.isEmpty { Text(model.scanning ? "正在收集目录…" : "此目录没有可列出的文件，或访问受到限制。").font(.system(size: 12)).foregroundStyle(.secondary).padding(.vertical, 28) }
                             VStack(spacing: 2) {
-                                ForEach(Array(model.rows.prefix(40).enumerated()), id: \.element.id) { index, node in diskRow(node, index: index) }
+                                ForEach(Array(model.rows.prefix(40).enumerated()), id: \.element.id) { index, node in diskRow(model.protectedNode(node), index: index) }
                             }
                         }
                     }.frame(maxWidth: .infinity)
@@ -150,7 +156,7 @@ struct ContentView: View {
             if node.kind == .directory { Button { model.start(URL(fileURLWithPath: node.path)) } label: { Image(systemName: "chevron.right").font(.system(size: 10)).foregroundStyle(.tertiary) }.buttonStyle(.plain).help("扫描 \(node.name)").accessibilityLabel("扫描 \(node.name)") } else { Color.clear.frame(width: 6) }
         }.padding(.horizontal, 8).padding(.vertical, 5).background(model.selectedPath == node.path ? DiskTheme.accent.opacity(0.07) : .clear, in: RoundedRectangle(cornerRadius: 9))
             .contentShape(Rectangle()).onTapGesture { model.selectedPath = node.path }
-            .contextMenu { Button("在 Finder 中显示") { model.reveal(node.path) }; if node.kind == .directory { Button("扫描此文件夹") { model.start(URL(fileURLWithPath: node.path)) } } }
+            .contextMenu { Button("在 Finder 中显示") { model.reveal(node.path) }; if node.kind == .directory { Button("保护此目录") { model.addProtection(node.path) }.disabled(model.checking); Button("扫描此文件夹") { model.start(URL(fileURLWithPath: node.path)) } } }
     }
     private var inspector: some View {
         Surface {
@@ -233,7 +239,7 @@ struct ContentView: View {
     private var footer: some View {
         HStack(spacing: 6) {
             Image(systemName: model.result?.unreadable ?? 0 > 0 ? "exclamationmark.circle" : "checkmark.shield")
-            if let r = model.result { Text(r.cancelled ? "扫描已停止 · 部分结果" : "\(r.files.formatted()) 个文件 · \(String(format: "%.1f", r.duration)) 秒"); if r.unreadable > 0 { Button("\(r.unreadable) 个路径未能读取") { model.permissions() }.buttonStyle(.plain).foregroundStyle(.orange).help("受系统权限限制；可在系统设置中允许完整磁盘访问") } }
+            if let r = model.result { Text(r.cancelled ? "扫描已停止 · 部分结果" : "\(r.files.formatted()) 个文件 · \(String(format: "%.1f", r.duration)) 秒"); if r.unreadable > 0 { Button("\(r.unreadable) 个路径未能读取") { model.showIssues = true }.buttonStyle(.plain).foregroundStyle(.orange).help("查看未读取路径与权限说明") } }
             else { Text("只读扫描 · 不读取文件内容") }
             Spacer()
             Text("APFS 共享数据可能使目录占用高于实际可释放空间").lineLimit(1)

@@ -100,10 +100,11 @@ public actor CleanupService {
     public init(home: URL = FileManager.default.homeDirectoryForCurrentUser, trash: @escaping TrashAction = { url in try FileManager.default.trashItem(at: url, resultingItemURL: nil) }, checkUsage: @escaping @Sendable ([String]) throws -> Void = SafetyInspector.requireUnused) {
         self.home = home; self.trash = trash; self.checkUsage = checkUsage
     }
-    public func prepare(paths: [String]) throws -> CleanupPlan {
+    public func prepare(paths: [String], protectedPaths: [String] = []) throws -> CleanupPlan {
         let unique = Array(Set(paths)).sorted()
         guard !unique.isEmpty && unique.count <= 50 else { throw CleanupError.refused("请选择 1–50 个缓存目录。") }
         for p in unique { if unique.contains(where: { p.hasPrefix($0 + "/") }) { throw CleanupError.refused("不能同时选择父目录和子目录。") } }
+        try UserProtection.requireAllowed(unique, protectedPaths: protectedPaths)
         try checkUsage(unique)
         let targets = try unique.map { path in
             let result = try SafetyInspector.inspect(URL(fileURLWithPath: path), home: home)
@@ -112,9 +113,10 @@ public actor CleanupService {
         let plan = CleanupPlan(id: UUID(), createdAt: Date(), targets: targets)
         plans = [plan.id: plan]; return plan
     }
-    public func execute(confirmedPlanID: UUID) throws -> CleanupReceipt {
+    public func execute(confirmedPlanID: UUID, protectedPaths: [String] = []) throws -> CleanupReceipt {
         guard let plan = plans.removeValue(forKey: confirmedPlanID) else { throw CleanupError.invalidPlan }
         guard Date().timeIntervalSince(plan.createdAt) < 120 else { throw CleanupError.expired }
+        try UserProtection.requireAllowed(plan.targets.map(\.path), protectedPaths: protectedPaths)
         try checkUsage(plan.targets.map(\.path))
         // Revalidate every item before moving any item. New source or installers block the whole batch.
         for target in plan.targets {
