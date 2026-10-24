@@ -2,7 +2,13 @@
 
 轻量、紧凑的 macOS 原生磁盘分析工具。Swift 6 + SwiftUI / AppKit，Apple Silicon，macOS 14+。
 
-当前版本为 **0.1.0 开发预览版**，尚未正式签名、公证或发布。官网源码只用于视觉参考，没有修改线上网站。
+当前版本为 **0.1.0**，正式包采用 Developer ID 签名、Apple 公证和装订票据。
+
+官网：https://aethernative.com/apps/aetherdisk/
+下载：https://github.com/bcblr1993/AetherDisk/releases/latest
+更新源：https://aethernative.com/apps/aetherdisk/appcast.xml
+
+正式分发为 Apple Silicon、macOS 14+。源码自行构建的默认产物仍为 ad-hoc 预览包，不能替代正式发行包。
 
 ## 首版功能
 
@@ -51,7 +57,7 @@ APFS 克隆共享、压缩、稀疏文件和其他卷使目录占用不能直接
 
 ## 应用内更新
 
-参见 [docs/UPDATES.md](docs/UPDATES.md)。预览版不设置伪造公钥或不存在的活跃通道，不会在启动时访问官网更新地址。配置有效 HTTPS Feed 与真实 Ed25519 公钥后，正式包支持应用内检查、下载和安装。
+参见 [docs/UPDATES.md](docs/UPDATES.md)。正式包使用独立的 AetherDisk Ed25519 更新身份，私钥保存在发布者钥匙串。更新清单与安装包均校验签名；源码默认预览包不会自动启用更新通道。
 
 ## 验证
 
