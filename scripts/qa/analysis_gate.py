@@ -28,7 +28,8 @@ launch(page='suggestions');s=dump('protection-restart');check('custom protection
 press('导出扫描报告');s=dump('save-default');check('report save defaults to Documents','Documents' in s or '文稿' in s)
 press('取消');check('export cancellation does not create file',remote('test ! -f '+OWNER+'/disk-report-021-final.csv && echo yes')=='yes')
 press('导出扫描报告');osa('tell application "System Events"\nkeystroke "g" using {command down, shift down}\ndelay 0.3\nkeystroke "'+OWNER+'"\nkey code 36\nend tell');time.sleep(.7)
-type_in('saveAsNameTextField','disk-report-021-final.csv');press('保存');time.sleep(.8)
+# Let NSSavePanel append the allowed extension even when macOS hides it in the field.
+type_in('saveAsNameTextField','disk-report-021-final');press('保存');time.sleep(.8)
 verified=py('''from pathlib import Path
 import csv,json
 p=Path.home()/'Applications/AetherDisk-Release-QA-20261024/disk-report-021-final.csv'
