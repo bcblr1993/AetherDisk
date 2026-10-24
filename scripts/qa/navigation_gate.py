@@ -19,6 +19,7 @@ baseline = remote('shasum -a 256 '+shlex.quote(snapshot_path))
 press('scan');time.sleep(1)
 check('partial scan does not overwrite complete history',baseline == remote('shasum -a 256 '+shlex.quote(snapshot_path)))
 press('设置与应用更新');s=dump('settings')
+check('settings shows cleanup risk and responsibility','可能存在问题或误判' in s and '开发者概不负责' in s)
 check('production updater ready','更新检查已就绪' in s and '自动检查更新' in s and '检查更新…' in s)
 
 if 'AXCheckBox |  | 自动检查更新 | 1' in s:press('自动检查更新')

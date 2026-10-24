@@ -23,6 +23,7 @@ check('3 candidates; two protected; default unselected',s.count('AXCheckBox |  |
 check('permission gap explicitly reported','1 个路径未能读取' in s)
 press('选择 .build');press('preview-cleanup');time.sleep(2)
 s=dump('confirmation');check('native explicit confirmation before trash','confirm-trash' in s and '确认移入废纸篓？' in s)
+check('cleanup risk and responsibility visible before confirmation','可能存在问题或误判' in s and '开发者概不负责' in s)
 check('preview preserves cache',remote('test -f '+ROOT+'/Developer/Safe/.build/cache.data && echo yes')=='yes')
 press('保留文件');check('cancel preserves cache',remote('test -f '+ROOT+'/Developer/Safe/.build/cache.data && echo yes')=='yes')
 press('preview-cleanup');time.sleep(2)

@@ -47,3 +47,15 @@ struct PanelTitle: View {
     let title: String; var caption: String = ""
     var body: some View { HStack { Text(title).font(.system(size: 14, weight: .semibold)); Spacer(); if !caption.isEmpty { Text(caption).font(.system(size: 11)).foregroundStyle(.secondary) } } }
 }
+
+struct CleanupRiskNotice: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("清理风险提示", systemImage: "exclamationmark.triangle").font(.system(size: 11, weight: .semibold)).foregroundStyle(.orange)
+            Text("软件及清理建议可能存在问题或误判，请谨慎操作。重要文件请先备份，并逐项核对清理目录。误删或数据丢失由用户自行承担，开发者概不负责。")
+                .font(.system(size: 11)).foregroundStyle(.secondary).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
+        }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
+            .background(Color.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
+            .accessibilityElement(children: .combine).accessibilityIdentifier("cleanup-risk-notice")
+    }
+}

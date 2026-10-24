@@ -248,9 +248,10 @@ struct ContentView: View {
     private func confirmation(_ plan: CleanupPlan) -> some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(spacing: 12) { Image(systemName: "trash").font(.system(size: 25)).foregroundStyle(DiskTheme.accent); VStack(alignment: .leading, spacing: 5) { Text("确认移入废纸篓？").font(.system(size: 20, weight: .semibold)); Text("\(plan.targets.count) 项 · 目录占用 \(DiskFormat.bytes(plan.allocated))").font(.system(size: 12)).foregroundStyle(.secondary) } }
-            Text("已检查源码、安装包、链接及文件占用。执行前会再次校验；如果目录变化，将保留文件。").font(.system(size: 12)).foregroundStyle(.secondary).lineSpacing(4)
+            Text("已检查源码、安装包、链接及文件占用。执行前会再次校验；检测到目录变化会停止清理。").font(.system(size: 12)).foregroundStyle(.secondary).lineSpacing(4)
             ScrollView { VStack(alignment: .leading, spacing: 12) { ForEach(plan.targets) { target in HStack(alignment: .top) { Image(systemName: "folder").foregroundStyle(DiskTheme.accent); Text(target.path).font(.system(size: 11)).textSelection(.enabled); Spacer(); Text(DiskFormat.bytes(target.allocated)).font(.system(size: 11)).monospacedDigit() } } }.frame(maxWidth: .infinity, alignment: .leading).padding(12) }.frame(maxHeight: 210).background(DiskTheme.inset, in: RoundedRectangle(cornerRadius: 10))
             Label("清空废纸篓后才会释放空间。可先从废纸篓还原。", systemImage: "arrow.uturn.backward").font(.system(size: 11)).foregroundStyle(.secondary)
+            CleanupRiskNotice()
             HStack { Spacer(); Button("保留文件", role: .cancel) { model.plan = nil }; Button("确认移入废纸篓", role: .destructive) { model.confirm() }.buttonStyle(.borderedProminent).accessibilityIdentifier("confirm-trash") }
         }.padding(26).frame(width: 570).background(DiskTheme.surface)
     }

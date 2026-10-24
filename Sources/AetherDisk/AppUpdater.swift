@@ -66,6 +66,7 @@ struct DiskSettings: View {
                 } }
                 Button("添加保护目录…") { model.chooseProtectedFolder() }.disabled(model.checking || model.protectedPaths.count >= 50).accessibilityIdentifier("add-protection")
             } }
+            CleanupRiskNotice()
             Label("扫描记录保存在本机，清理前始终需要确认。", systemImage: "lock.shield").font(.system(size: 11)).foregroundStyle(.secondary)
         }.padding(26).frame(width: 490).background(DiskTheme.background)
     }
