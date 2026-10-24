@@ -17,6 +17,17 @@ final class SafetyAuditTests: XCTestCase, @unchecked Sendable {
     func cache(_ name: String = "Example") throws -> URL { let p = try file("Home/Library/Caches/\(name)/cache.data"); return p.deletingLastPathComponent() }
     var home: URL { root.appendingPathComponent("Home") }
 
+    func testBatchPreviewDeduplicatesHardlinksAcrossTargets() async throws {
+        let a = try cache("A"); let b = home.appendingPathComponent("Library/Caches/B")
+        try FileManager.default.createDirectory(at: b, withIntermediateDirectories: true)
+        try FileManager.default.linkItem(at: a.appendingPathComponent("cache.data"), to: b.appendingPathComponent("alias.data"))
+        let service = CleanupService(home: home, checkUsage: { _ in })
+        let plan = try await service.prepare(paths: [a.path, b.path])
+        let scan = try DiskScanner.scan(root: home.appendingPathComponent("Library/Caches"), home: home)
+        var parentInfo = stat(); XCTAssertEqual(lstat(home.appendingPathComponent("Library/Caches").path, &parentInfo), 0)
+        XCTAssertEqual(plan.allocated, scan.allocated - Int64(parentInfo.st_blocks) * 512)
+        XCTAssertLessThan(plan.allocated, plan.targets.reduce(0) { $0 + $1.allocated })
+    }
     func testBareRepositoryIsProtected() throws {
         let candidate = try cache()
         _ = try SafetyInspector.runProcess("/usr/bin/git", ["init", "--bare", "-q", candidate.path], allowFailure: false)

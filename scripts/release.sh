@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 : "${AETHERDISK_UPDATE_FEED:?Set HTTPS production feed}"
 : "${AETHERDISK_UPDATE_PUBLIC_KEY:?Set production public key}"
 VERSION="${AETHERDISK_VERSION:-$(cat VERSION)}"
-BUILD="${AETHERDISK_BUILD:-2026102408}"
+BUILD="${AETHERDISK_BUILD:-2026102409}"
 OUT="$PWD/outputs/releases/$VERSION-$BUILD"
 IDENTITY='Developer ID Application: YanNan Chen (5984KQD4D7)'
 PROFILE="${NOTARY_PROFILE:-AetherRoute-Notary}"

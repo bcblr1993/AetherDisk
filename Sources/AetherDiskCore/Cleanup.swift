@@ -18,12 +18,17 @@ public struct CleanupTarget: Sendable, Identifiable {
     public let path: String
     public let allocated: Int64
     fileprivate let fingerprint: String
+    fileprivate let allocationByInode: [String: Int64]
 }
 public struct CleanupPlan: Sendable, Identifiable {
     public let id: UUID
     public let createdAt: Date
     public let targets: [CleanupTarget]
-    public var allocated: Int64 { targets.reduce(0) { $0 + $1.allocated } }
+    public var allocated: Int64 {
+        var unique: [String: Int64] = [:]
+        for target in targets { unique.merge(target.allocationByInode, uniquingKeysWith: max) }
+        return unique.values.reduce(0, +)
+    }
 }
 public struct CleanupReceipt: Sendable {
     public let moved: [String]
@@ -34,6 +39,7 @@ public struct Inspection: Sendable {
     public let fingerprint: String
     public let allocated: Int64
     public let files: Int
+    fileprivate let allocationByInode: [String: Int64]
 }
 public enum SafetyInspector {
     public static func inspect(_ url: URL, home: URL) throws -> Inspection {
@@ -44,7 +50,7 @@ public enum SafetyInspector {
         guard lstat(home.path, &homeInfo) == 0, lstat(root.path, &own) == 0, own.st_dev == homeInfo.st_dev, (own.st_mode & S_IFMT) == S_IFDIR else { throw CleanupError.changed }
         guard RuleCatalog.ancestorProtection(for: root).isEmpty else { throw CleanupError.refused("缓存位于受保护的源码、安装包或备份目录内，已保留。") }
         var all: [[String]] = []; var allocated: Int64 = 0; var files = 0
-        var inodes: Set<String> = []
+        var inodes: [String: Int64] = [:]
         func walk(_ path: URL, info st: stat, parent: DirectoryHandle?, depth: Int) throws {
             guard st.st_dev == own.st_dev, depth < 256 else { throw CleanupError.refused("跨卷或目录过深，保留原文件。") }
             let type = st.st_mode & S_IFMT
@@ -54,7 +60,8 @@ public enum SafetyInspector {
             guard protection.isEmpty else { throw CleanupError.refused("已保护：\(protection.map(\.title).sorted().joined(separator: "、"))。请在 Finder 中查看。") }
             guard all.count < 1_000_000 else { throw CleanupError.refused("目录过大，无法安全复核，保留原文件。") }
             all.append([String(path.path.dropFirst(root.path.count)), String(st.st_dev), String(st.st_ino), String(st.st_mode), String(st.st_size), String(st.st_blocks), String(st.st_nlink), String(st.st_mtimespec.tv_sec), String(st.st_mtimespec.tv_nsec), String(st.st_ctimespec.tv_sec), String(st.st_ctimespec.tv_nsec)])
-            if inodes.insert("\(st.st_dev):\(st.st_ino)").inserted { allocated += Int64(st.st_blocks) * 512 }
+            let identity = "\(st.st_dev):\(st.st_ino)"
+            if inodes[identity] == nil { let bytes = Int64(st.st_blocks) * 512; inodes[identity] = bytes; allocated += bytes }
             if type == S_IFDIR {
                 let dir = try parent.map { try DirectoryHandle(parent: $0.descriptor, name: path.lastPathComponent) } ?? DirectoryHandle(path: path.path)
                 defer { close(dir.descriptor) }
@@ -86,7 +93,7 @@ public enum SafetyInspector {
         }
         guard root.resolvingSymlinksInPath().path == root.path else { throw CleanupError.changed }
         let hash = SHA256.hash(data: try JSONEncoder().encode(all.sorted { $0[0] < $1[0] })).map { String(format: "%02x", $0) }.joined()
-        return .init(fingerprint: hash, allocated: allocated, files: files)
+        return .init(fingerprint: hash, allocated: allocated, files: files, allocationByInode: inodes)
     }
     public static func requireUnused(_ paths: [String]) throws {
         let result = try runProcess("/usr/sbin/lsof", ["-nP", "-F0n"], allowFailure: true)
@@ -136,7 +143,7 @@ public actor CleanupService {
         try checkUsage(unique)
         let targets = try unique.map { path in
             let result = try SafetyInspector.inspect(URL(fileURLWithPath: path), home: home)
-            return CleanupTarget(path: path, allocated: result.allocated, fingerprint: result.fingerprint)
+            return CleanupTarget(path: path, allocated: result.allocated, fingerprint: result.fingerprint, allocationByInode: result.allocationByInode)
         }
         let plan = CleanupPlan(id: UUID(), createdAt: Date(), targets: targets)
         plans = [plan.id: plan]; return plan
