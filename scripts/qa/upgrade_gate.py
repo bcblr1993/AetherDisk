@@ -27,7 +27,7 @@ for _ in range(30):
  except Exception:continue
 else:raise RuntimeError('Replacement and relaunch failed')
 (out/(prefix+'-upgrade-after.json')).write_text(json.dumps(after,indent=2))
-for key in ['snapshot_sha256','protected_source_sha256','installer_sha256','automatic_checks']:assert before[key]==after[key],key
+for key in ['snapshot_sha256','protected_source_sha256','installer_sha256','automatic_checks','protected_paths']:assert before[key]==after[key],key
 expected=Path('outputs/releases')/(version+'-'+build)/'AetherDisk.app/Contents/MacOS/AetherDisk'
 assert after['binary_sha256']==hashlib.sha256(expected.read_bytes()).hexdigest() and after['build']==build
 (out/(prefix+'-upgrade-relaunched.txt')).write_text(ax())
@@ -42,5 +42,5 @@ launch(page='changes');s=ax();assert '与上次扫描对比' in s and '再扫描
 (out/(prefix+'-legacy-history-ui.txt')).write_text(s)
 press('nav-types');s=ax();assert '视频' in s and '128 MiB' in s
 (out/(prefix+'-updated-types-ui.txt')).write_text(s)
-result={'from':before['version'],'to':version,'build':build,'real_install_and_relaunch':True,'binary_matches_release':True,'scan_history_preserved':True,'protected_source_preserved':True,'installer_preserved':True,'automatic_check_preference_preserved':True,'no_update_message':True,'legacy_history_loaded_by_new_app':True,'new_analysis_available_after_upgrade':True}
+result={'from':before['version'],'to':version,'build':build,'real_install_and_relaunch':True,'binary_matches_release':True,'scan_history_preserved':True,'protected_source_preserved':True,'installer_preserved':True,'automatic_check_preference_preserved':True,'custom_protection_preference_preserved':True,'no_update_message':True,'legacy_history_loaded_by_new_app':True,'new_analysis_available_after_upgrade':True}
 (out/(prefix+'-upgrade-gate.json')).write_text(json.dumps(result,indent=2));print(json.dumps(result,indent=2))
