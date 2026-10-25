@@ -14,7 +14,7 @@ struct ContentView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
                         if let message = model.message {
-                            HStack(alignment: .top) { Image(systemName: "info.circle.fill").foregroundStyle(DiskTheme.accent); Text(message).font(.system(size: 12)).textSelection(.enabled); Spacer(); Button { model.message = nil } label: { Image(systemName: "xmark") }.buttonStyle(.plain) }
+                            HStack(alignment: .top) { Image(systemName: "info.circle.fill").foregroundStyle(DiskTheme.accent); Text(message).font(.system(size: 12)).textSelection(.enabled); Spacer(); Button { model.message = nil } label: { Image(systemName: "xmark") }.buttonStyle(DiskButtonStyle(kind: .quiet)) }
                                 .padding(12).background(DiskTheme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
                         }
                         switch model.page {
@@ -30,7 +30,7 @@ struct ContentView: View {
                 footer.padding(.horizontal, 24).padding(.vertical, 11)
             }
         }
-        .background(DiskTheme.background).tint(DiskTheme.accent)
+        .background(DiskTheme.background).tint(DiskTheme.accent).buttonStyle(DiskButtonStyle())
         .frame(minWidth: 1080, minHeight: 700)
         .sheet(item: $model.plan) { plan in confirmation(plan) }
         .sheet(isPresented: $model.showIssues) { ScanIssuesView(model: model) }
@@ -49,13 +49,13 @@ struct ContentView: View {
             location("下载", "arrow.down.circle", FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads"))
             location("文稿", "doc.text", FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents"))
             location("开发项目", "hammer", FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("IdeaProjects"))
-            Button { model.chooseFolder() } label: { Label("选择文件夹…", systemImage: "folder.badge.plus").font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading).padding(10) }.buttonStyle(.plain).foregroundStyle(.secondary).disabled(model.checking)
+            Button { model.chooseFolder() } label: { Label("选择文件夹…", systemImage: "folder.badge.plus").font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading).padding(10) }.buttonStyle(DiskSidebarButtonStyle()).foregroundStyle(.secondary).disabled(model.checking)
             Spacer()
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 7) { Image(systemName: "lock.shield").foregroundStyle(DiskTheme.accent); Text("文件留在你的 Mac").font(.system(size: 11, weight: .medium)) }
                 Text("本机分析 · 确认后清理\n源码与安装包默认保护").font(.system(size: 10)).foregroundStyle(.secondary).lineSpacing(4)
                 Divider().padding(.vertical, 3)
-                HStack { Text("\(updater.version) · \(updater.releaseLabel)").font(.system(size: 10)).foregroundStyle(.tertiary); Spacer(); Button { model.page = "settings" } label: { Image(systemName: "gearshape").font(.system(size: 13)) }.buttonStyle(.plain).help("设置与应用更新") }
+                HStack { Text("\(updater.version) · \(updater.releaseLabel)").font(.system(size: 10)).foregroundStyle(.tertiary); Spacer(); Button { model.page = "settings" } label: { Image(systemName: "gearshape").font(.system(size: 13)) }.buttonStyle(DiskButtonStyle(kind: .quiet)).help("设置与应用更新") }
             }.padding(.horizontal, 10)
         }.padding(.horizontal, 14).padding(.top, 34).padding(.bottom, 16).background(.regularMaterial)
     }
@@ -65,10 +65,10 @@ struct ContentView: View {
                 .font(.system(size: 12, weight: model.page == id ? .semibold : .regular)).padding(.horizontal, 10).padding(.vertical, 8)
                 .foregroundStyle(model.page == id ? DiskTheme.accent : Color.secondary)
                 .background(model.page == id ? DiskTheme.accent.opacity(0.1) : .clear, in: RoundedRectangle(cornerRadius: 9))
-        }.buttonStyle(.plain).accessibilityIdentifier("nav-" + id)
+        }.buttonStyle(DiskSidebarButtonStyle()).accessibilityIdentifier("nav-" + id)
     }
     private func location(_ name: String, _ symbol: String, _ url: URL) -> some View {
-        Button { model.page = "overview"; model.start(url) } label: { Label(name, systemImage: symbol).font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading).padding(10) }.buttonStyle(.plain).foregroundStyle(.secondary).disabled(model.checking)
+        Button { model.page = "overview"; model.start(url) } label: { Label(name, systemImage: symbol).font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading).padding(10) }.buttonStyle(DiskSidebarButtonStyle()).foregroundStyle(.secondary).disabled(model.checking)
     }
     private var header: some View {
         HStack {
@@ -82,7 +82,7 @@ struct ContentView: View {
             if model.scanning {
                 Button("停止扫描", role: .cancel) { model.cancel() }.controlSize(.regular)
             } else {
-                Button { model.start() } label: { Label(model.result == nil ? "开始扫描" : "重新扫描", systemImage: "arrow.clockwise") }.buttonStyle(.borderedProminent).controlSize(.regular).disabled(model.checking).accessibilityIdentifier("scan")
+                Button { model.start() } label: { Label(model.result == nil ? "开始扫描" : "重新扫描", systemImage: "arrow.clockwise") }.buttonStyle(DiskButtonStyle(kind: .primary)).controlSize(.regular).disabled(model.checking).accessibilityIdentifier("scan")
             }
         }
     }
@@ -101,7 +101,12 @@ struct ContentView: View {
                     Surface {
                         VStack(alignment: .leading, spacing: 10) {
                             PanelTitle(title: "占用排行", caption: "已分配大小")
-                            HStack { Image(systemName: "magnifyingglass").foregroundStyle(.tertiary); TextField("搜索当前层级", text: $model.query).textFieldStyle(.plain); if model.root != FileManager.default.homeDirectoryForCurrentUser { Button { model.start(model.root.deletingLastPathComponent()) } label: { Image(systemName: "arrow.up") }.buttonStyle(.plain).help("扫描上一级") } }.font(.system(size: 11)).padding(8).background(DiskTheme.inset, in: RoundedRectangle(cornerRadius: 7))
+                            HStack(spacing: 8) {
+                                DiskSearchField(placeholder: "搜索当前层级", text: $model.query)
+                                if model.root != FileManager.default.homeDirectoryForCurrentUser {
+                                    Button { model.start(model.root.deletingLastPathComponent()) } label: { Image(systemName: "arrow.up") }.help("扫描上一级")
+                                }
+                            }
                             HStack { Text("文件夹 / 文件"); Spacer(); Text("占用 / 比例") }.font(.system(size: 10)).foregroundStyle(.tertiary)
                             if model.rows.isEmpty { Text(model.scanning ? "正在收集目录…" : "此目录没有可列出的文件，或访问受到限制。").font(.system(size: 12)).foregroundStyle(.secondary).padding(.vertical, 28) }
                             VStack(spacing: 2) {
@@ -142,7 +147,7 @@ struct ContentView: View {
                 Image(systemName: "folder.badge.magnifyingglass").font(.system(size: 34, weight: .light)).foregroundStyle(DiskTheme.accent).padding(.top, 20)
                 Text("从一个文件夹开始").font(.system(size: 18, weight: .semibold))
                 Text("包含隐藏目录，逐层看清占用。\n扫描不读取文件内容，也不会修改你的文件。").font(.system(size: 12)).foregroundStyle(.secondary).multilineTextAlignment(.center).lineSpacing(5)
-                Button("扫描个人文件夹") { model.start(FileManager.default.homeDirectoryForCurrentUser) }.buttonStyle(.borderedProminent)
+                Button("扫描个人文件夹") { model.start(FileManager.default.homeDirectoryForCurrentUser) }.buttonStyle(DiskButtonStyle(kind: .primary))
                 HStack(spacing: 24) { Label("源码保护", systemImage: "chevron.left.forwardslash.chevron.right"); Label("确认后清理", systemImage: "checkmark.shield"); Label("本地处理", systemImage: "lock") }.font(.system(size: 10)).foregroundStyle(.secondary).padding(.vertical, 20)
             }.frame(maxWidth: .infinity)
         }
@@ -153,7 +158,7 @@ struct ContentView: View {
             Image(systemName: node.kind == .directory ? "folder.fill" : "doc.fill").font(.system(size: 15)).foregroundStyle(DiskTheme.colors[index % DiskTheme.colors.count]).frame(width: 28, height: 28).background(DiskTheme.colors[index % DiskTheme.colors.count].opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
             VStack(alignment: .leading, spacing: 5) { HStack(spacing: 5) { Text(node.name).font(.system(size: 12, weight: .medium)).lineLimit(1); if node.restricted { Image(systemName: "lock").font(.system(size: 9)).foregroundStyle(.orange) } }; GeometryReader { g in Capsule().fill(DiskTheme.colors[index % DiskTheme.colors.count].opacity(0.65)).frame(width: max(2, g.size.width * fraction)) }.frame(height: 3) }.frame(maxWidth: .infinity, alignment: .leading)
             VStack(alignment: .trailing, spacing: 4) { Text(DiskFormat.bytes(node.allocated)).font(.system(size: 12, weight: .medium, design: .rounded)).monospacedDigit(); Text(String(format: "%.1f%%", fraction * 100)).font(.system(size: 9)).foregroundStyle(.tertiary) }.frame(width: 75, alignment: .trailing)
-            if node.kind == .directory { Button { model.start(URL(fileURLWithPath: node.path)) } label: { Image(systemName: "chevron.right").font(.system(size: 10)).foregroundStyle(.tertiary) }.buttonStyle(.plain).help("扫描 \(node.name)").accessibilityLabel("扫描 \(node.name)") } else { Color.clear.frame(width: 6) }
+            if node.kind == .directory { Button { model.start(URL(fileURLWithPath: node.path)) } label: { Image(systemName: "chevron.right").font(.system(size: 10)).foregroundStyle(.tertiary) }.buttonStyle(DiskButtonStyle(kind: .quiet)).help("扫描 \(node.name)").accessibilityLabel("扫描 \(node.name)") } else { Color.clear.frame(width: 6) }
         }.padding(.horizontal, 8).padding(.vertical, 5).background(model.selectedPath == node.path ? DiskTheme.accent.opacity(0.07) : .clear, in: RoundedRectangle(cornerRadius: 9))
             .contentShape(Rectangle()).onTapGesture { model.selectedPath = node.path }
             .contextMenu { Button("在 Finder 中显示") { model.reveal(node.path) }; if node.kind == .directory { Button("保护此目录") { model.addProtection(node.path) }.disabled(model.checking); Button("扫描此文件夹") { model.start(URL(fileURLWithPath: node.path)) } } }
@@ -181,7 +186,7 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack { Image(systemName: "sparkles").foregroundStyle(DiskTheme.purple); Text("留一点呼吸空间").font(.system(size: 12, weight: .semibold)) }
                 Text(model.eligible.isEmpty ? "暂无明确可处理的缓存。重要文件会默认保留。" : "发现 \(model.eligible.count) 项缓存可进一步检查，目录占用约 \(DiskFormat.bytes(model.eligibleBytes))。").font(.system(size: 11)).foregroundStyle(.secondary).lineSpacing(4)
-                Button("查看清理建议 →") { model.page = "suggestions" }.buttonStyle(.plain).font(.system(size: 11, weight: .medium)).foregroundStyle(DiskTheme.accent)
+                Button("查看清理建议 →") { model.page = "suggestions" }.buttonStyle(DiskButtonStyle(kind: .quiet)).font(.system(size: 11, weight: .medium)).foregroundStyle(DiskTheme.accent)
                 Text("目录占用不等于可释放空间。").font(.system(size: 9)).foregroundStyle(.tertiary)
             }.frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -204,7 +209,7 @@ struct ContentView: View {
                                 Text(r.blocked ? r.node.protection.map(\.title).sorted().joined(separator: " · ") : r.reason).font(.system(size: 11)).foregroundStyle(.secondary)
                             }
                             Spacer()
-                            VStack(alignment: .trailing, spacing: 9) { Text(DiskFormat.bytes(r.node.allocated)).font(.system(size: 14, weight: .semibold, design: .rounded)); Button("查看位置") { model.reveal(r.id) }.buttonStyle(.plain).font(.system(size: 10)).foregroundStyle(DiskTheme.accent) }
+                            VStack(alignment: .trailing, spacing: 9) { Text(DiskFormat.bytes(r.node.allocated)).font(.system(size: 14, weight: .semibold, design: .rounded)); Button("查看位置") { model.reveal(r.id) }.buttonStyle(DiskButtonStyle(kind: .quiet)).font(.system(size: 10)).foregroundStyle(DiskTheme.accent) }
                         }.padding(.vertical, 16)
                         if r.id != model.recommendations.last?.id { Divider().opacity(0.65) }
                     }
@@ -214,7 +219,7 @@ struct ContentView: View {
                 Text("已选择 \(model.selectedCaches.count) 项").font(.system(size: 12)).foregroundStyle(.secondary)
                 Spacer()
                 if model.checking { ProgressView().controlSize(.small) }
-                Button { model.preview() } label: { Label("检查并预览", systemImage: "checkmark.shield") }.buttonStyle(.borderedProminent).disabled(model.selectedCaches.isEmpty || !model.fresh || model.checking || model.scanning).accessibilityIdentifier("preview-cleanup")
+                Button { model.preview() } label: { Label("检查并预览", systemImage: "checkmark.shield") }.buttonStyle(DiskButtonStyle(kind: .primary)).disabled(model.selectedCaches.isEmpty || !model.fresh || model.checking || model.scanning).accessibilityIdentifier("preview-cleanup")
             }
             Text("检查会重新确认文件占用与目录内容。新发现的源码、Git 跟踪文件、安装包或符号链接会阻止清理。移入废纸篓不代表已释放空间。").font(.system(size: 10)).foregroundStyle(.secondary).lineSpacing(4)
         }
@@ -239,20 +244,24 @@ struct ContentView: View {
     private var footer: some View {
         HStack(spacing: 6) {
             Image(systemName: model.result?.unreadable ?? 0 > 0 ? "exclamationmark.circle" : "checkmark.shield")
-            if let r = model.result { Text(r.cancelled ? "扫描已停止 · 部分结果" : "\(r.files.formatted()) 个文件 · \(String(format: "%.1f", r.duration)) 秒"); if r.unreadable > 0 { Button("\(r.unreadable) 个路径未能读取") { model.showIssues = true }.buttonStyle(.plain).foregroundStyle(.orange).help("查看未读取路径与权限说明") } }
+            if let r = model.result { Text(r.cancelled ? "扫描已停止 · 部分结果" : "\(r.files.formatted()) 个文件 · \(String(format: "%.1f", r.duration)) 秒"); if r.unreadable > 0 { Button("\(r.unreadable) 个路径未能读取") { model.showIssues = true }.buttonStyle(DiskButtonStyle(kind: .quiet)).foregroundStyle(.orange).help("查看未读取路径与权限说明") } }
             else { Text("只读扫描 · 不读取文件内容") }
             Spacer()
             Text("APFS 共享数据可能使目录占用高于实际可释放空间").lineLimit(1)
         }.font(.system(size: 9)).foregroundStyle(.secondary)
     }
     private func confirmation(_ plan: CleanupPlan) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(spacing: 12) { Image(systemName: "trash").font(.system(size: 25)).foregroundStyle(DiskTheme.accent); VStack(alignment: .leading, spacing: 5) { Text("确认移入废纸篓？").font(.system(size: 20, weight: .semibold)); Text("\(plan.targets.count) 项 · 目录占用 \(DiskFormat.bytes(plan.allocated))").font(.system(size: 12)).foregroundStyle(.secondary) } }
-            Text("已检查源码、安装包、链接及文件占用。执行前会再次校验；检测到目录变化会停止清理。").font(.system(size: 12)).foregroundStyle(.secondary).lineSpacing(4)
-            ScrollView { VStack(alignment: .leading, spacing: 12) { ForEach(plan.targets) { target in HStack(alignment: .top) { Image(systemName: "folder").foregroundStyle(DiskTheme.accent); Text(target.path).font(.system(size: 11)).textSelection(.enabled); Spacer(); Text(DiskFormat.bytes(target.allocated)).font(.system(size: 11)).monospacedDigit() } } }.frame(maxWidth: .infinity, alignment: .leading).padding(12) }.frame(maxHeight: 210).background(DiskTheme.inset, in: RoundedRectangle(cornerRadius: 10))
+        DiskDialog(title: "确认移入废纸篓？", subtitle: "\(plan.targets.count) 项 · 目录占用 \(DiskFormat.bytes(plan.allocated))", symbol: "trash", destructive: true) {
+            Text("已检查源码、安装包、链接及文件占用。执行前会再次校验；检测到目录变化会停止清理。")
+                .font(.system(size: 12)).foregroundStyle(.secondary).lineSpacing(4)
+            ScrollView { VStack(alignment: .leading, spacing: 12) { ForEach(plan.targets) { target in HStack(alignment: .top) { Image(systemName: "folder").foregroundStyle(DiskTheme.accent); Text(target.path).font(.system(size: 11)).textSelection(.enabled); Spacer(); Text(DiskFormat.bytes(target.allocated)).font(.system(size: 11)).monospacedDigit() } } }.frame(maxWidth: .infinity, alignment: .leading).padding(12) }.frame(maxHeight: 170).background(DiskTheme.inset, in: RoundedRectangle(cornerRadius: DiskTheme.controlRadius))
             Label("清空废纸篓后才会释放空间。可先从废纸篓还原。", systemImage: "arrow.uturn.backward").font(.system(size: 11)).foregroundStyle(.secondary)
             CleanupRiskNotice()
-            HStack { Spacer(); Button("保留文件", role: .cancel) { model.plan = nil }; Button("确认移入废纸篓", role: .destructive) { model.confirm() }.buttonStyle(.borderedProminent).accessibilityIdentifier("confirm-trash") }
-        }.padding(26).frame(width: 570).background(DiskTheme.surface)
+        } actions: {
+            Spacer()
+            Button("保留文件", role: .cancel) { model.plan = nil }.keyboardShortcut(.cancelAction)
+            Button("确认移入废纸篓", role: .destructive) { model.confirm() }
+                .buttonStyle(DiskButtonStyle(kind: .primary)).accessibilityIdentifier("confirm-trash")
+        }
     }
 }

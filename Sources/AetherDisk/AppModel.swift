@@ -31,6 +31,7 @@ final class AppModel: ObservableObject {
     private var generation = UUID()
     private let cleanup = CleanupService()
     private var worker: Task<Void, Never>?
+    private var presentingPanel = false
     var recommendations: [Recommendation] {
         (result?.recommendations ?? []).map { r in var value = r; value.node = UserProtection.apply(r.node, paths: protectedPaths); return value }
     }
@@ -49,24 +50,40 @@ final class AppModel: ObservableObject {
         plan = nil; selectedCaches = []
     }
     func chooseProtectedFolder() {
-        guard !checking else { return }
+        guard !checking, !presentingPanel else { return }
         let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false
         panel.prompt = "保护此目录"; panel.message = "继续统计占用，但禁止清理该目录、内部文件及包含它的缓存父目录。"
-        if panel.runModal() == .OK, let url = panel.url { addProtection(url.path) }
+        present(panel) { [weak self] response in
+            if response == .OK, let url = panel.url { self?.addProtection(url.path) }
+        }
     }
     func exportReport() {
-        guard let result, !scanning, !exporting else { return }
+        guard let result, !scanning, !exporting, !presentingPanel else { return }
         let panel = NSSavePanel(); panel.directoryURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first; panel.allowedContentTypes = [.commaSeparatedText]
         panel.nameFieldStringValue = "AetherDisk-扫描报告.csv"; panel.message = "导出元数据、保留的目录样本、大文件、类型汇总与未读取路径，不读取或导出文件内容。"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        exporting = true; let paths = protectedPaths
-        Task {
-            do {
-                try await Task.detached(priority: .utility) { try ScanReport.csv(result, protectedPaths: paths).write(to: url, atomically: true, encoding: .utf8) }.value
-                message = "扫描报告已保存：\(url.path)"
-            } catch { message = "导出失败：\(error.localizedDescription)" }
-            exporting = false
+        exporting = true
+        present(panel) { [weak self] response in
+            guard let self else { return }
+            guard response == .OK, let url = panel.url else { self.exporting = false; return }
+            let paths = self.protectedPaths
+            Task {
+                do {
+                    try await Task.detached(priority: .utility) { try ScanReport.csv(result, protectedPaths: paths).write(to: url, atomically: true, encoding: .utf8) }.value
+                    self.message = "扫描报告已保存：\(url.path)"
+                } catch { self.message = "导出失败：\(error.localizedDescription)" }
+                self.exporting = false
+            }
         }
+    }
+    private func present(_ panel: NSSavePanel, completion: @escaping @MainActor (NSApplication.ModalResponse) -> Void) {
+        guard !presentingPanel else { completion(.cancel); return }
+        presentingPanel = true
+        if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+            guard window.attachedSheet == nil else { presentingPanel = false; completion(.cancel); return }
+            panel.beginSheetModal(for: window) { response in
+                Task { @MainActor in self.presentingPanel = false; completion(response) }
+            }
+        } else { let response = panel.runModal(); presentingPanel = false; completion(response) }
     }
     var eligible: [Recommendation] { recommendations.filter { !$0.blocked } }
     var eligibleBytes: Int64 { eligible.reduce(0) { $0 + $1.node.allocated } }
@@ -85,10 +102,12 @@ final class AppModel: ObservableObject {
         return node.allocated - old.allocated
     }
     func chooseFolder() {
-        guard !checking else { return }
+        guard !checking, !presentingPanel else { return }
         let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = false
         panel.prompt = "扫描此文件夹"; panel.message = "只读扫描文件大小；包含隐藏目录，不读取文件内容。"
-        if panel.runModal() == .OK, let url = panel.url { start(url) }
+        present(panel) { [weak self] response in
+            if response == .OK, let url = panel.url { self?.start(url) }
+        }
     }
     func start(_ url: URL? = nil) {
         guard !checking else { return }

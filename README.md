@@ -2,7 +2,7 @@
 
 轻量、紧凑的 macOS 原生磁盘分析工具。Swift 6 + SwiftUI / AppKit，Apple Silicon，macOS 14+。
 
-当前版本为 **0.2.1**，正式包采用 Developer ID 签名、Apple 公证和装订票据。
+当前版本为 **0.2.2**，正式包采用 Developer ID 签名、Apple 公证和装订票据。
 
 官网：https://aethernative.com/apps/aetherdisk/
 下载：https://github.com/bcblr1993/AetherDisk/releases/latest

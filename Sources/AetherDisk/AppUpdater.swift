@@ -55,19 +55,19 @@ struct DiskSettings: View {
                 Text(updater.status).font(.system(size: 12)).foregroundStyle(.secondary)
                 Toggle("自动检查更新", isOn: $updater.automatic).disabled(!updater.ready)
                 Text("每日检查一次。发现新版本后由你决定安装，不自动下载，不发送系统概况。").font(.system(size: 11)).foregroundStyle(.secondary).lineSpacing(4)
-                Button("检查更新…") { updater.check() }.disabled(updater.ready && !updater.canCheck)
+                Button("检查更新…") { updater.check() }.buttonStyle(DiskButtonStyle()).disabled(updater.ready && !updater.canCheck)
             } }
             Surface { VStack(alignment: .leading, spacing: 12) {
                 PanelTitle(title: "自定义保护", caption: "\(model.protectedPaths.count) / 50")
                 Text("目录仍参与占用统计；清理时保护该目录、其内部文件和包含它的缓存父目录。").font(.system(size: 11)).foregroundStyle(.secondary)
                 ForEach(model.protectedPaths, id: \.self) { path in HStack {
                     Text(DiskFormat.compactPath(path)).font(.system(size: 11)).lineLimit(2).textSelection(.enabled).help(path)
-                    Spacer(); Button("移除") { model.removeProtection(path) }.disabled(model.checking).accessibilityLabel("移除保护 " + path)
+                    Spacer(); Button("移除") { model.removeProtection(path) }.buttonStyle(DiskButtonStyle(kind: .quiet)).controlSize(.small).disabled(model.checking).accessibilityLabel("移除保护 " + path)
                 } }
-                Button("添加保护目录…") { model.chooseProtectedFolder() }.disabled(model.checking || model.protectedPaths.count >= 50).accessibilityIdentifier("add-protection")
+                Button("添加保护目录…") { model.chooseProtectedFolder() }.buttonStyle(DiskButtonStyle()).disabled(model.checking || model.protectedPaths.count >= 50).accessibilityIdentifier("add-protection")
             } }
             CleanupRiskNotice()
             Label("扫描记录保存在本机，清理前始终需要确认。", systemImage: "lock.shield").font(.system(size: 11)).foregroundStyle(.secondary)
-        }.padding(26).frame(width: 490).background(DiskTheme.background)
+        }.padding(24).frame(maxWidth: 760, alignment: .leading).frame(maxWidth: .infinity).background(DiskTheme.background).buttonStyle(DiskButtonStyle())
     }
 }
