@@ -102,4 +102,70 @@ final class AnalysisTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    func testRankingSortHierarchyBrowserAndRecommendationQuery() throws {
+        try file("Home/Alpha/Sub/leaf.data", bytes: 4096)
+        try file("Home/Beta/b1.data", bytes: 4096); try file("Home/Beta/b2.data", bytes: 4096); try file("Home/Beta/b3.data", bytes: 4096)
+        let sparse = try file("Home/Gamma/sparse.bin", bytes: 0)
+        let handle = try FileHandle(forWritingTo: sparse); try handle.truncate(atOffset: 64 * 1024 * 1024); try handle.close()
+        let home = root.appendingPathComponent("Home")
+        let result = try DiskScanner.scan(root: home, home: home)
+        let topDirs = result.nodes.filter { $0.parent == home.path && $0.path != home.path }
+        XCTAssertEqual(RankingSort.files.sort(topDirs).first?.name, "Beta")
+        XCTAssertEqual(RankingSort.logical.sort(topDirs).first?.name, "Gamma")
+        let alpha = try XCTUnwrap(topDirs.first { $0.name == "Alpha" })
+        XCTAssertTrue(HierarchyBrowser.canBrowse(alpha, in: result))
+        let leaf = try XCTUnwrap(result.nodes.first { $0.name == "leaf.data" })
+        XCTAssertFalse(HierarchyBrowser.canBrowse(leaf, in: result))
+        let crumbs = HierarchyBrowser.breadcrumbs(root: home.path, current: home.appendingPathComponent("Alpha/Sub").path)
+        XCTAssertEqual(crumbs.map(\.name), ["Home", "Alpha", "Sub"])
+        XCTAssertEqual(FileCategory.classify("index.ts", allocated: 4096), .source)
+        XCTAssertEqual(FileCategory.classify("stream.ts", allocated: 128 * 1024 * 1024), .video)
+        XCTAssertTrue(RuleCatalog.protection(name: "stream.ts", directory: false).contains(.source))
+        let recs = [
+            Recommendation(node: .init(path: "/h/Library/Caches/AppA", allocated: 100), category: .browser),
+            Recommendation(node: .init(path: "/h/project/.build", allocated: 200, protection: [.source]), category: .build)
+        ]
+        XCTAssertEqual(RecommendationQuery.rows(recs, filter: .eligible).map(\.node.name), ["AppA"])
+        XCTAssertEqual(RecommendationQuery.rows(recs, filter: .protected).map(\.node.name), [".build"])
+        XCTAssertEqual(RecommendationQuery.rows(recs, category: .build, query: "project").map(\.node.name), [".build"])
+    }
+
+    func testDeepComparisonSurfacesSubdirectoryChangesWithoutRedundantRemovedChildren() throws {
+        let home = root.appendingPathComponent("Home")
+        try file("Home/Workspace/ServiceA/data.bin", bytes: 8192)
+        try file("Home/Legacy/Nested/old.bin", bytes: 8192)
+        let before = try DiskScanner.scan(root: home, home: home)
+        try file("Home/Workspace/ServiceA/data.bin", bytes: 32768)
+        try FileManager.default.removeItem(at: home.appendingPathComponent("Legacy"))
+        let after = try DiskScanner.scan(root: home, home: home)
+        let deep = ScanComparison.changes(current: after, previous: before, depth: .deep)
+        XCTAssertTrue(deep.contains { $0.0.name == "ServiceA" && $0.1 > 0 })
+        XCTAssertTrue(deep.contains { $0.0.name == "Legacy" && $0.1 < 0 })
+        XCTAssertFalse(deep.contains { $0.0.name == "Nested" })
+    }
+
+    func testStaleLargeFileFilterAndScanHistoryStore() throws {
+        let recent = try file("recent.bin", bytes: 2 * 1024 * 1024)
+        let stale = try file("stale.bin", bytes: 2 * 1024 * 1024)
+        let oldDate = Date(timeIntervalSinceNow: -120 * 86_400)
+        try FileManager.default.setAttributes([.modificationDate: oldDate], ofItemAtPath: stale.path)
+        let scan = try DiskScanner.scan(root: root)
+        let large = scan.analysis?.largeFiles ?? []
+        XCTAssertNotNil(large.first { $0.path == recent.path }?.modifiedAt)
+        XCTAssertEqual(LargeFileQuery.rows(large, minimum: 1024 * 1024, staleDays: 0).count, 2)
+        XCTAssertEqual(LargeFileQuery.rows(large, minimum: 1024 * 1024, staleDays: 90).map(\.name), ["stale.bin"])
+        XCTAssertTrue(LargeFileQuery.rows(large, minimum: 1024 * 1024, staleDays: 365).isEmpty)
+
+        var history: [ScanResult] = []
+        for i in 0..<7 {
+            var item = scan
+            item.scannedAt = Date(timeIntervalSince1970: Double(1_700_000_000 + i * 60))
+            history = ScanHistoryStore.append(item, into: history)
+        }
+        var partial = scan; partial.cancelled = true; partial.scannedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        history = ScanHistoryStore.append(partial, into: history)
+        XCTAssertEqual(history.count, ScanHistoryStore.maxSnapshots)
+        XCTAssertEqual(history.first?.scannedAt, Date(timeIntervalSince1970: Double(1_700_000_000 + 6 * 60)))
+    }
+
 }

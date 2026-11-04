@@ -1,6 +1,6 @@
 """Native UI regression for shared buttons, sheets and window-attached file panels."""
 from vm_helpers import *
-checks=[];OUT=Path('outputs/logs');OUT.mkdir(exist_ok=True)
+checks=[];OUT=Path(os.environ.get('AETHERDISK_QA_OUT','outputs/logs'));OUT.mkdir(parents=True,exist_ok=True)
 def check(name,condition):
  checks.append({'name':name,'passed':bool(condition)})
  (OUT/'ui-style-gate.json').write_text(json.dumps(checks,ensure_ascii=False,indent=2))

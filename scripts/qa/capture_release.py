@@ -13,5 +13,5 @@ for name,page,appearance,preview in [('large-light','large','light',False),('lar
   time.sleep(.5)
  else:raise RuntimeError('Screenshot timeout: '+name)
  print(name,flush=True)
-out=Path('outputs/screenshots')/version;out.mkdir(exist_ok=True)
-subprocess.run(['scp','-i',str(Path.home()/'.ssh/id_ed25519'),'-r','chenxu@192.168.64.21:'+shots+'/.',str(out)],check=True)
+out=Path('outputs/screenshots')/version;out.mkdir(parents=True,exist_ok=True)
+subprocess.run(['scp','-i',str(Path.home()/'.ssh/id_ed25519'),'-o','StrictHostKeyChecking=accept-new','-r',f'chenxu@{VM_IP}:{shots}/.',str(out)],check=True)

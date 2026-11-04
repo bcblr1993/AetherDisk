@@ -1,14 +1,17 @@
 """Run against only the explicitly prepared AetherDisk release QA fixture in macos27."""
-import subprocess,json,time,hashlib
+import os,subprocess,json,time,hashlib
 from pathlib import Path
-SSH=['ssh','-i',str(Path.home()/'.ssh/id_ed25519'),'-o','BatchMode=yes','chenxu@192.168.64.21']
-ROOT='/Users/chenxu/AetherDisk-Release-QA-20261024'
-OUT=Path('outputs/logs');OUT.mkdir(parents=True,exist_ok=True)
+VM_IP=os.environ.get('AETHERDISK_VM_IP','192.168.64.21')
+SSH=['ssh','-i',str(Path.home()/'.ssh/id_ed25519'),'-o','BatchMode=yes','-o','StrictHostKeyChecking=accept-new',f'chenxu@{VM_IP}']
+OWNER=os.environ.get('AETHERDISK_QA_OWNER','/Users/chenxu/Applications/AetherDisk-Release-QA-20261024')
+ROOT=os.environ.get('AETHERDISK_QA_ROOT','/Users/chenxu/AetherDisk-Release-QA-20261024')
+AX_BIN=os.environ.get('AETHERDISK_AX_BIN','/tmp/AetherDiskAX-20261024')
+OUT=Path(os.environ.get('AETHERDISK_QA_OUT','outputs/logs'));OUT.mkdir(parents=True,exist_ok=True)
 checks=[]
 def remote(command):return subprocess.run(SSH+[command],text=True,capture_output=True,check=True,timeout=45).stdout.strip()
 def ax(action='dump',target=None,value=None):
  import shlex
- return remote(' '.join(map(shlex.quote,['/tmp/AetherDiskAX-20261024',action]+([target] if target else [])+([value] if value is not None else []))))
+ return remote(' '.join(map(shlex.quote,[AX_BIN,action]+([target] if target else [])+([value] if value is not None else []))))
 def check(label,condition):
  checks.append({'name':label,'passed':bool(condition)});print(label,condition,flush=True)
  (OUT/'vm-function-gate.json').write_text(json.dumps(checks,ensure_ascii=False,indent=2))
@@ -54,8 +57,8 @@ assert ax('focus','搜索当前层级')=='0'
 subprocess.run(SSH+['osascript -'],input='tell application "System Events"\nkeystroke "a" using command down\nkey code 51\nend tell',text=True,capture_output=True,check=True)
 time.sleep(1)
 press('扫描 Documents');time.sleep(1)
-s=dump('drilldown');check('directory drilldown',ROOT+'/Documents' in s or '~/AetherDisk-Release-QA-20261024/Documents' in s)
+s=dump('drilldown');check('directory drilldown',ROOT+'/Documents' in s or f'~/{Path(ROOT).name}/Documents' in s)
 press('在 Finder 中显示');check('Finder reveal action completed',True)
 # Original root again, then modify a known test file and rescan to verify history.
-remote('open --env AETHERDISK_QA=1 ~/Applications/AetherDisk-Release-QA-20261024/AetherDisk.app')
+remote(f'open --env AETHERDISK_QA=1 {OWNER}/AetherDisk.app')
 print(json.dumps(checks,ensure_ascii=False),flush=True)

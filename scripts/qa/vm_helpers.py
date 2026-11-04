@@ -1,11 +1,13 @@
-import subprocess,json,time,shlex
+import os,subprocess,json,time,shlex
 from pathlib import Path
-SSH=['ssh','-i',str(Path.home()/'.ssh/id_ed25519'),'-o','BatchMode=yes','chenxu@192.168.64.21']
-OWNER='/Users/chenxu/Applications/AetherDisk-Release-QA-20261024'
-ROOT='/Users/chenxu/AetherDisk-Release-QA-20261024'
+VM_IP=os.environ.get('AETHERDISK_VM_IP','192.168.64.21')
+SSH=['ssh','-i',str(Path.home()/'.ssh/id_ed25519'),'-o','BatchMode=yes','-o','StrictHostKeyChecking=accept-new',f'chenxu@{VM_IP}']
+OWNER=os.environ.get('AETHERDISK_QA_OWNER','/Users/chenxu/Applications/AetherDisk-Release-QA-20261024')
+ROOT=os.environ.get('AETHERDISK_QA_ROOT','/Users/chenxu/AetherDisk-Release-QA-20261024')
+AX_BIN=os.environ.get('AETHERDISK_AX_BIN','/tmp/AetherDiskAX-20261024')
 def remote(command):return subprocess.run(SSH+[command],text=True,capture_output=True,check=True,timeout=55).stdout.strip()
 def py(source):return subprocess.run(SSH+['python3 -'],input=source,text=True,capture_output=True,check=True,timeout=55).stdout.strip()
-def ax(action='dump',target=None):return remote(' '.join(map(shlex.quote,['/tmp/AetherDiskAX-20261024',action]+([target] if target else []))))
+def ax(action='dump',target=None):return remote(' '.join(map(shlex.quote,[AX_BIN,action]+([target] if target else []))))
 def stop():
  return py('''import subprocess,os,signal
 for row in subprocess.check_output(['ps','-axo','pid=,comm='],text=True).splitlines():

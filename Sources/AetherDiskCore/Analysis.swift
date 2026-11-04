@@ -9,9 +9,11 @@ public enum FileCategory: String, Codable, CaseIterable, Sendable, Identifiable 
         case .source: "源码与脚本"; case .document: "文档"; case .other: "其他文件"
         }
     }
-    public static func classify(_ name: String) -> Self {
+    public static func classify(_ name: String, allocated: Int64 = 0) -> Self {
         let ext = (name.lowercased() as NSString).pathExtension
-        if ["mp4","mkv","mov","avi","m4v","webm","ts","m2ts","flv"].contains(ext) { return ext == "ts" ? .source : .video }
+        if ["mp4","mkv","mov","avi","m4v","webm","ts","m2ts","flv"].contains(ext) {
+            return (ext == "ts" && allocated < 64 * 1024 * 1024) ? .source : .video
+        }
         if ["mp3","flac","aac","m4a","wav","aiff","ogg","opus"].contains(ext) { return .audio }
         if ["png","jpg","jpeg","heic","gif","webp","tiff","svg","raw","dng","avif"].contains(ext) { return .image }
         let flags = RuleCatalog.protection(name: name, directory: false)
@@ -39,9 +41,67 @@ public enum SizeBasis: String, CaseIterable, Sendable, Identifiable {
     public func size(_ node: DiskNode) -> Int64 { self == .allocated ? node.allocated : node.logical }
 }
 public enum LargeFileQuery {
-    public static func rows(_ files: [DiskNode], query: String = "", category: FileCategory? = nil, minimum: Int64 = 100 * 1024 * 1024, basis: SizeBasis = .allocated) -> [DiskNode] {
-        files.filter { basis.size($0) >= minimum && (category == nil || FileCategory.classify($0.name) == category) && (query.isEmpty || $0.path.localizedCaseInsensitiveContains(query)) }
-            .sorted { basis.size($0) == basis.size($1) ? $0.path < $1.path : basis.size($0) > basis.size($1) }
+    public static func rows(_ files: [DiskNode], query: String = "", category: FileCategory? = nil, minimum: Int64 = 100 * 1024 * 1024, basis: SizeBasis = .allocated, staleDays: Int = 0, referenceDate: Date = Date()) -> [DiskNode] {
+        let cutoff = Int64(referenceDate.timeIntervalSince1970) - Int64(staleDays) * 86_400
+        return files.filter { node in
+            let matchesStale = staleDays <= 0 || (node.modifiedAt.map { $0 <= cutoff } ?? false)
+            return matchesStale && basis.size(node) >= minimum && (category == nil || FileCategory.classify(node.name, allocated: node.allocated) == category) && (query.isEmpty || node.path.localizedCaseInsensitiveContains(query))
+        }.sorted { basis.size($0) == basis.size($1) ? $0.path < $1.path : basis.size($0) > basis.size($1) }
+    }
+}
+public enum RankingSort: String, CaseIterable, Sendable, Identifiable {
+    case allocated, logical, files
+    public var id: String { rawValue }
+    public var title: String {
+        switch self { case .allocated: "已分配"; case .logical: "逻辑大小"; case .files: "文件数" }
+    }
+    public func sort(_ nodes: [DiskNode]) -> [DiskNode] {
+        nodes.sorted { a, b in
+            switch self {
+            case .allocated: a.allocated == b.allocated ? a.path < b.path : a.allocated > b.allocated
+            case .logical: a.logical == b.logical ? a.path < b.path : a.logical > b.logical
+            case .files: a.fileCount == b.fileCount ? (a.allocated == b.allocated ? a.path < b.path : a.allocated > b.allocated) : a.fileCount > b.fileCount
+            }
+        }
+    }
+}
+public enum SuggestionFilter: String, CaseIterable, Sendable, Identifiable {
+    case all, eligible, protected
+    public var id: String { rawValue }
+    public var title: String {
+        switch self { case .all: "全部"; case .eligible: "可检查"; case .protected: "已保护" }
+    }
+}
+public enum RecommendationQuery {
+    public static func rows(_ items: [Recommendation], filter: SuggestionFilter = .all, category: CacheCategory? = nil, query: String = "") -> [Recommendation] {
+        items.filter { item in
+            let matchesFilter = filter == .all || (filter == .eligible && !item.blocked) || (filter == .protected && item.blocked)
+            let matchesCategory = category == nil || item.category == category
+            let matchesQuery = query.isEmpty || item.node.name.localizedCaseInsensitiveContains(query) || item.id.localizedCaseInsensitiveContains(query)
+            return matchesFilter && matchesCategory && matchesQuery
+        }
+    }
+}
+public enum HierarchyBrowser {
+    public static func canBrowse(_ node: DiskNode, in result: ScanResult?) -> Bool {
+        guard node.kind == .directory, let result else { return false }
+        return result.nodes.contains { $0.parent == node.path && $0.path != node.path }
+    }
+    public static func breadcrumbs(root: String, current: String) -> [(name: String, path: String)] {
+        let stdRoot = URL(fileURLWithPath: root).standardizedFileURL.path
+        let stdCurrent = URL(fileURLWithPath: current).standardizedFileURL.path
+        guard stdCurrent == stdRoot || stdCurrent.hasPrefix(stdRoot == "/" ? "/" : stdRoot + "/") else {
+            return [(URL(fileURLWithPath: stdRoot).lastPathComponent, stdRoot)]
+        }
+        var items: [(name: String, path: String)] = []
+        var cursor = stdCurrent
+        while true {
+            let name = cursor == "/" ? "/" : URL(fileURLWithPath: cursor).lastPathComponent
+            items.append((name, cursor))
+            if cursor == stdRoot || cursor == "/" { break }
+            cursor = URL(fileURLWithPath: cursor).deletingLastPathComponent().path
+        }
+        return items.reversed()
     }
 }
 // Kept separate from the directory display budget: metadata beyond 20,000 nodes still contributes.
@@ -50,7 +110,7 @@ struct AnalysisAccumulator {
     var physical: [DiskNode] = []; var logical: [DiskNode] = []
     var physicalFloor: Int64 = 0; var logicalFloor: Int64 = 0
     mutating func record(_ node: DiskNode) {
-        let category = FileCategory.classify(node.name)
+        let category = FileCategory.classify(node.name, allocated: node.allocated)
         var usage = types[category] ?? .init(category: category)
         usage.allocated += node.allocated; usage.logical += node.logical; usage.files += 1; types[category] = usage
         if node.allocated >= 1024 * 1024 && (physical.count < 200 || node.allocated >= physicalFloor) {

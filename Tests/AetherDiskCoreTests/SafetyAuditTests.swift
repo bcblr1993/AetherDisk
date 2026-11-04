@@ -163,6 +163,38 @@ final class SafetyAuditTests: XCTestCase, @unchecked Sendable {
         try FileManager.default.setAttributes([.modificationDate: attrs[.modificationDate]!], ofItemAtPath: payload.path)
         XCTAssertNotEqual(before.fingerprint, try SafetyInspector.inspect(candidate, home: home).fingerprint)
     }
+
+    func testExpandedDeveloperCachesAndProjectBuildMarkers() throws {
+        let xcodeSim = try file("Home/Library/Developer/CoreSimulator/Caches/sim.data").deletingLastPathComponent()
+        let goBuild = try file("Home/.cache/go-build/blob.data").deletingLastPathComponent()
+        let uvCache = try file("Home/.cache/uv/wheel.cache").deletingLastPathComponent()
+        let vscodeCache = try file("Home/Library/Application Support/Code/CachedData/v8.bin").deletingLastPathComponent()
+        XCTAssertEqual(RuleCatalog.category(for: xcodeSim, home: home), .xcode)
+        XCTAssertEqual(RuleCatalog.category(for: goBuild, home: home), .compiler)
+        XCTAssertEqual(RuleCatalog.category(for: uvCache, home: home), .compiler)
+        XCTAssertEqual(RuleCatalog.category(for: vscodeCache, home: home), .compiler)
+        XCTAssertNoThrow(try SafetyInspector.inspect(goBuild, home: home))
+
+        let mavenTarget = try file("Home/maven-app/target/classes.bin").deletingLastPathComponent()
+        let cmakeBuild = try file("Home/cpp-app/build/obj.bin").deletingLastPathComponent()
+        let ruffCache = try file("Home/py-app/.ruff_cache/content.bin").deletingLastPathComponent()
+        XCTAssertNil(RuleCatalog.category(for: mavenTarget, home: home))
+        XCTAssertNil(RuleCatalog.category(for: cmakeBuild, home: home))
+        XCTAssertNil(RuleCatalog.category(for: ruffCache, home: home))
+        try file("Home/maven-app/pom.xml")
+        try file("Home/cpp-app/CMakeLists.txt")
+        try file("Home/py-app/pyproject.toml")
+        XCTAssertEqual(RuleCatalog.category(for: mavenTarget, home: home), .build)
+        XCTAssertEqual(RuleCatalog.category(for: cmakeBuild, home: home), .build)
+        XCTAssertEqual(RuleCatalog.category(for: ruffCache, home: home), .build)
+    }
+
+    func testCacheCandidateSurvivesDirectoryDisplayBudget() throws {
+        for i in 0..<20_010 { try file("Home/Downloads/\(i).data", bytes: 0) }
+        let lateCache = try file("Home/Library/Caches/LateVisitedApp/cache.data", bytes: 8192).deletingLastPathComponent()
+        let result = try DiskScanner.scan(root: home, home: home)
+        XCTAssertTrue(result.recommendations.contains { $0.id == lateCache.path })
+    }
 }
 private final class LockedCount: @unchecked Sendable {
     private let lock = NSLock(); private var count = 0

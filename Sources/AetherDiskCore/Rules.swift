@@ -7,28 +7,30 @@ public enum RuleCatalog {
         func regular(_ path: String) -> Bool {
             var info = stat(); return lstat(path, &info) == 0 && (info.st_mode & S_IFMT) == S_IFREG
         }
-        if path == h + "/Library/Developer/Xcode/DerivedData" { return .xcode }
+        let xcodePaths = ["/Library/Developer/Xcode/DerivedData", "/Library/Developer/CoreSimulator/Caches", "/Library/Developer/Xcode/DocumentationCache"]
+        if xcodePaths.contains(where: { path == h + $0 }) { return .xcode }
         if path.hasPrefix(h + "/.cache/codex-runtimes/codex-runtime-install-") && url.deletingLastPathComponent().path == h + "/.cache/codex-runtimes" { return .update }
-        let exact = ["/.docker/scout/sbom", "/.npm/_cacache", "/.nvm/.cache", "/Library/Application Support/Claude/Cache", "/Library/Application Support/Claude/Code Cache"]
+        let exact = [
+            "/.docker/scout/sbom", "/.npm/_cacache", "/.nvm/.cache",
+            "/.cache/go-build", "/.cache/pip/http-v2", "/.cache/uv", "/.gradle/caches",
+            "/Library/Application Support/Claude/Cache", "/Library/Application Support/Claude/Code Cache",
+            "/Library/Application Support/Code/Cache", "/Library/Application Support/Code/CachedData",
+            "/Library/Application Support/Cursor/Cache", "/Library/Application Support/Cursor/CachedData"
+        ]
         if exact.contains(where: { path == h + $0 }) { return .compiler }
         let prefix = h + "/Library/Caches/"
         if path.hasPrefix(prefix), !path.dropFirst(prefix.count).contains("/") { return .browser }
-        if url.lastPathComponent == "target", regular(url.deletingLastPathComponent().appendingPathComponent("Cargo.toml").path) { return .build }
-        if url.lastPathComponent == ".build", regular(url.deletingLastPathComponent().appendingPathComponent("Package.swift").path) { return .build }
         let parent = url.deletingLastPathComponent()
         func marker(_ names: [String]) -> Bool {
-            names.contains { name in
-                var info = stat()
-                return lstat(parent.appendingPathComponent(name).path, &info) == 0 && (info.st_mode & S_IFMT) == S_IFREG
-            }
+            names.contains { regular(parent.appendingPathComponent($0).path) }
         }
+        if url.lastPathComponent == "target", marker(["Cargo.toml", "pom.xml"]) { return .build }
+        if url.lastPathComponent == ".build", marker(["Package.swift"]) { return .build }
         if url.lastPathComponent == ".dart_tool", marker(["pubspec.yaml"]) { return .build }
         if url.lastPathComponent == ".gradle", marker(["settings.gradle", "settings.gradle.kts", "build.gradle", "build.gradle.kts"]) { return .build }
         if url.lastPathComponent == "DerivedData", marker(["project.yml"]) { return .build }
-        if url.lastPathComponent == "build" {
-            let parent = url.deletingLastPathComponent()
-            if ["Package.swift", "pubspec.yaml", "project.yml", "build.gradle", "build.gradle.kts"].contains(where: { regular(parent.appendingPathComponent($0).path) }) { return .build }
-        }
+        if url.lastPathComponent == ".ruff_cache", marker(["pyproject.toml"]) { return .build }
+        if url.lastPathComponent == "build", marker(["Package.swift", "pubspec.yaml", "project.yml", "build.gradle", "build.gradle.kts", "CMakeLists.txt"]) { return .build }
         return nil
     }
     public static func protection(name: String, directory: Bool) -> Set<Protection> {

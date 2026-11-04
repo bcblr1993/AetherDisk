@@ -18,7 +18,7 @@ private final class ScanWorker {
     let progress: @Sendable (ScanProgress) -> Void
     var device: dev_t = 0
     var files = 0; var directories = 0; var allocated: Int64 = 0; var unreadable = 0
-    var issues: [String] = []; var nodes: [DiskNode] = []; var analysis = AnalysisAccumulator()
+    var issues: [String] = []; var nodes: [DiskNode] = []; var cacheCandidates: [DiskNode] = []; var analysis = AnalysisAccumulator()
     var hardLinks: Set<String> = []; var lastUpdate = Date.distantPast; var completedRoots: [DiskNode] = []
     init(root: URL, home: URL, cancellation: ScanCancellation, progress: @escaping @Sendable (ScanProgress) -> Void) {
         self.root = root; self.home = home; self.cancellation = cancellation; self.progress = progress
@@ -39,7 +39,10 @@ private final class ScanWorker {
         device = st.st_dev; let started = Date()
         let node = visit(root, depth: 0, openedRoot: handle)
         let details = analysis.result()
-        let storedPaths = Set(nodes.map(\.path))
+        var storedPaths = Set(nodes.map(\.path))
+        for candidate in cacheCandidates where !storedPaths.contains(candidate.path) {
+            nodes.append(candidate); storedPaths.insert(candidate.path)
+        }
         nodes.append(contentsOf: details.largeFiles.filter { !storedPaths.contains($0.path) })
         publish(root.path)
         return .init(root: root.path, scannedAt: Date(), duration: Date().timeIntervalSince(started), allocated: node.allocated, logical: node.logical, files: files, directories: directories, unreadable: unreadable, issues: issues, nodes: nodes.sorted { $0.allocated > $1.allocated }, recommendations: RuleCatalog.recommendations(nodes: nodes, home: home), cancelled: cancellation.isCancelled, analysis: details)
@@ -63,6 +66,7 @@ private final class ScanWorker {
         // Never cross into another mounted volume or follow APFS system/data aliases.
         guard st.st_dev == device else { note(url.path); node.protection.insert(.incomplete); node.restricted = true; return node }
         if type != S_IFDIR && type != S_IFREG { return node }
+        node.modifiedAt = Int64(st.st_mtimespec.tv_sec)
         node.protection = RuleCatalog.protection(name: url.lastPathComponent, directory: type == S_IFDIR)
         if type == S_IFREG {
             node.kind = .file; files += 1; node.fileCount = 1
@@ -100,7 +104,9 @@ private final class ScanWorker {
                     note(url.path); node.protection.insert(.incomplete)
                 }
             } catch { note(url.path); node.restricted = true; node.protection.insert(.incomplete) }
-            if depth == 0 || (nodes.count < 20_000 && (depth <= 3 || RuleCatalog.category(for: url, home: home) != nil)) { nodes.append(node) }
+            let isCache = RuleCatalog.category(for: url, home: home) != nil
+            if depth == 0 || (nodes.count < 20_000 && (depth <= 3 || isCache)) { nodes.append(node) }
+            else if isCache && cacheCandidates.count < 200 { cacheCandidates.append(node) }
         }
         if Date().timeIntervalSince(lastUpdate) > 0.3 {
             publish(url.path)

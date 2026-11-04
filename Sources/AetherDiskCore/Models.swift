@@ -11,10 +11,11 @@ public struct DiskNode: Identifiable, Codable, Sendable, Equatable {
     public var fileCount: Int
     public var restricted: Bool
     public var protection: Set<Protection>
+    public var modifiedAt: Int64?
     public var name: String { URL(fileURLWithPath: path).lastPathComponent }
     public var parent: String { URL(fileURLWithPath: path).deletingLastPathComponent().path }
-    public init(path: String, kind: ItemKind = .directory, allocated: Int64 = 0, logical: Int64 = 0, fileCount: Int = 0, restricted: Bool = false, protection: Set<Protection> = []) {
-        self.path = path; self.kind = kind; self.allocated = allocated; self.logical = logical; self.fileCount = fileCount; self.restricted = restricted; self.protection = protection
+    public init(path: String, kind: ItemKind = .directory, allocated: Int64 = 0, logical: Int64 = 0, fileCount: Int = 0, restricted: Bool = false, protection: Set<Protection> = [], modifiedAt: Int64? = nil) {
+        self.path = path; self.kind = kind; self.allocated = allocated; self.logical = logical; self.fileCount = fileCount; self.restricted = restricted; self.protection = protection; self.modifiedAt = modifiedAt
     }
 }
 public enum Protection: String, Codable, Sendable, CaseIterable {
@@ -33,8 +34,9 @@ public struct Recommendation: Identifiable, Codable, Sendable {
     public var blocked: Bool { !node.protection.isEmpty || node.restricted }
     public var reason: String { category.reason }
 }
-public enum CacheCategory: String, Codable, Sendable {
+public enum CacheCategory: String, Codable, Sendable, CaseIterable, Identifiable {
     case xcode, browser, compiler, update, build
+    public var id: String { rawValue }
     public var title: String {
         switch self {
         case .xcode: "Xcode 编译缓存"; case .browser: "网页与应用缓存"; case .compiler: "开发工具缓存"

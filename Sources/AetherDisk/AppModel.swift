@@ -11,12 +11,20 @@ final class AppModel: ObservableObject {
     @Published var largeCategory: FileCategory?
     @Published var largeMinimum: Int64 = 100 * 1024 * 1024
     @Published var largeBasis: SizeBasis = .allocated
+    @Published var largeStaleDays = 0
+    @Published var rankingSort: RankingSort = .allocated
+    @Published var browsePath: String?
+    @Published var suggestionFilter: SuggestionFilter = .all
+    @Published var suggestionCategory: CacheCategory?
+    @Published var suggestionQuery = ""
+    @Published var comparisonDepth: ComparisonDepth = .top
     @Published var showIssues = false
     @Published var exporting = false
     @Published var page = "overview"
     @Published var root = FileManager.default.homeDirectoryForCurrentUser
     @Published var result: ScanResult?
     @Published var previous: ScanResult?
+    @Published var history: [ScanResult] = []
     @Published var progress = ScanProgress()
     @Published var scanning = false
     @Published var fresh = false
@@ -35,7 +43,27 @@ final class AppModel: ObservableObject {
     var recommendations: [Recommendation] {
         (result?.recommendations ?? []).map { r in var value = r; value.node = UserProtection.apply(r.node, paths: protectedPaths); return value }
     }
-    var largeFiles: [DiskNode] { LargeFileQuery.rows(result?.analysis?.largeFiles ?? [], query: largeQuery, category: largeCategory, minimum: largeMinimum, basis: largeBasis).map { UserProtection.apply($0, paths: protectedPaths) } }
+    var filteredRecommendations: [Recommendation] {
+        RecommendationQuery.rows(recommendations, filter: suggestionFilter, category: suggestionCategory, query: suggestionQuery)
+    }
+    var activeScope: String { browsePath ?? (result?.root ?? root.path) }
+    var isBrowsingSubfolder: Bool {
+        guard let browsePath, let root = result?.root else { return false }
+        return browsePath != root
+    }
+    var breadcrumbs: [(name: String, path: String)] {
+        guard let root = result?.root else { return [] }
+        return HierarchyBrowser.breadcrumbs(root: root, current: activeScope)
+    }
+    func canBrowse(_ node: DiskNode) -> Bool { HierarchyBrowser.canBrowse(node, in: result) }
+    func browse(_ path: String?) {
+        guard let result else { return }
+        let target = path.map { URL(fileURLWithPath: $0).standardizedFileURL.path } ?? result.root
+        browsePath = (target == result.root || !target.hasPrefix(result.root == "/" ? "/" : result.root + "/")) ? nil : target
+        query = ""
+        selectedPath = rows.first?.path
+    }
+    var largeFiles: [DiskNode] { LargeFileQuery.rows(result?.analysis?.largeFiles ?? [], query: largeQuery, category: largeCategory, minimum: largeMinimum, basis: largeBasis, staleDays: largeStaleDays).map { UserProtection.apply($0, paths: protectedPaths) } }
     func protectedNode(_ node: DiskNode) -> DiskNode { UserProtection.apply(node, paths: protectedPaths) }
     func addProtection(_ path: String) {
         guard !checking, protectedPaths.count < 50 else { return }
@@ -89,13 +117,14 @@ final class AppModel: ObservableObject {
     var eligibleBytes: Int64 { eligible.reduce(0) { $0 + $1.node.allocated } }
     var selectedNode: DiskNode? { (result?.nodes.first { $0.path == selectedPath } ?? progress.rootNodes.first { $0.path == selectedPath }).map(protectedNode) }
     var rows: [DiskNode] {
-        let scope = result?.root ?? root.path
+        let scope = activeScope
         let items = (result?.nodes ?? progress.rootNodes).filter { $0.parent == scope && $0.path != scope }
-        return items.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) }.sorted { $0.allocated > $1.allocated }
+        let filtered = items.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) }
+        return rankingSort.sort(filtered)
     }
     var changes: [(DiskNode, Int64)] {
         guard let previous, let result else { return [] }
-        return ScanComparison.changes(current: result, previous: previous)
+        return ScanComparison.changes(current: result, previous: previous, depth: comparisonDepth)
     }
     func delta(_ node: DiskNode) -> Int64? {
         guard previous?.root == result?.root, let old = previous?.nodes.first(where: { $0.path == node.path }) else { return nil }
@@ -114,8 +143,8 @@ final class AppModel: ObservableObject {
         token.cancel(); worker?.cancel(); token = .init(); let thisToken = token
         generation = UUID(); let id = generation
         root = (url ?? root).standardizedFileURL; let scope = root
-        query = ""; plan = nil; showIssues = false
-        volume = .read(at: root); previous = loadSnapshot(root: root)
+        query = ""; browsePath = nil; suggestionQuery = ""; plan = nil; showIssues = false
+        volume = .read(at: root); history = loadHistory(root: root); previous = history.first
         result = nil; scanning = true; fresh = false; selectedCaches = []; selectedPath = nil; message = nil; progress = .init()
         let updateHandler: @Sendable (ScanProgress) -> Void = { [weak self] update in
             guard let self else { return }
@@ -172,18 +201,36 @@ final class AppModel: ObservableObject {
     private var storage: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("AetherDisk/Scans", isDirectory: true)
     }
+    private func snapshotKey(root: URL) -> String {
+        SHA256.hash(data: Data(root.path.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
+    }
     private func snapshotURL(root: URL) -> URL {
-        let key = SHA256.hash(data: Data(root.path.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
-        return storage.appendingPathComponent(key + ".json")
+        storage.appendingPathComponent(snapshotKey(root: root) + ".json")
+    }
+    private func historyURL(root: URL) -> URL {
+        storage.appendingPathComponent(snapshotKey(root: root) + "-history.json")
     }
     private func loadSnapshot(root: URL) -> ScanResult? {
         guard let data = try? Data(contentsOf: snapshotURL(root: root)) else { return nil }
         return try? JSONDecoder().decode(ScanResult.self, from: data)
     }
+    private func loadHistory(root: URL) -> [ScanResult] {
+        var list: [ScanResult] = []
+        if let data = try? Data(contentsOf: historyURL(root: root)), let decoded = try? JSONDecoder().decode([ScanResult].self, from: data) {
+            list = decoded
+        }
+        if let single = loadSnapshot(root: root) {
+            list = ScanHistoryStore.append(single, into: list)
+        }
+        return list
+    }
     private func saveSnapshot(_ result: ScanResult) {
         do {
             try FileManager.default.createDirectory(at: storage, withIntermediateDirectories: true)
-            try JSONEncoder().encode(result).write(to: snapshotURL(root: URL(fileURLWithPath: result.root)), options: .atomic)
+            let targetRoot = URL(fileURLWithPath: result.root)
+            try JSONEncoder().encode(result).write(to: snapshotURL(root: targetRoot), options: .atomic)
+            let updated = ScanHistoryStore.append(result, into: loadHistory(root: targetRoot))
+            try JSONEncoder().encode(updated).write(to: historyURL(root: targetRoot), options: .atomic)
         } catch { message = "扫描已完成，但历史记录保存失败：\(error.localizedDescription)" }
     }
 }

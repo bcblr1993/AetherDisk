@@ -14,6 +14,9 @@ struct LargeFilesPage: View {
                         Text("1 MiB").tag(Int64(1024 * 1024)); Text("10 MiB").tag(Int64(10 * 1024 * 1024))
                         Text("100 MiB").tag(Int64(100 * 1024 * 1024)); Text("1 GiB").tag(Int64(1024 * 1024 * 1024))
                     }.frame(width: 120).accessibilityIdentifier("large-minimum")
+                    Picker("修改", selection: $model.largeStaleDays) {
+                        Text("不限时间").tag(0); Text("30 天未改").tag(30); Text("90 天未改").tag(90); Text("1 年未改").tag(365)
+                    }.frame(width: 128).accessibilityIdentifier("large-stale")
                 }.font(.system(size: 11)).controlSize(.large)
                 Picker("文件类型", selection: $model.largeCategory) {
                     Text("全部类型").tag(nil as FileCategory?)

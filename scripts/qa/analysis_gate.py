@@ -1,6 +1,6 @@
 """0.2.1 native feature acceptance; only the known macos27 test fixture is modified."""
 from vm_helpers import *
-OUT=Path('outputs/logs');checks=[]
+OUT=Path(os.environ.get('AETHERDISK_QA_OUT','outputs/logs'));OUT.mkdir(parents=True,exist_ok=True);checks=[]
 def check(name,value):
  checks.append({'name':name,'passed':bool(value)});print(name,value,flush=True);(OUT/'021-analysis-gate.json').write_text(json.dumps(checks,ensure_ascii=False,indent=2));assert value,name
 def dump(name):
@@ -32,7 +32,7 @@ press('导出扫描报告');osa('tell application "System Events"\nkeystroke "g"
 type_in('saveAsNameTextField','disk-report-021-final');press('保存');time.sleep(.8)
 verified=py('''from pathlib import Path
 import csv,json
-p=Path.home()/'Applications/AetherDisk-Release-QA-20261024/disk-report-021-final.csv'
+p=Path(OWNER)/'disk-report-021-final.csv'
 r=list(csv.DictReader(p.open(encoding='utf-8-sig',newline='')))
 assert all(len(row)==10 for row in r)
 assert any(row['section']=='large_file' and row['name']=='Movie.mp4' for row in r)
@@ -40,7 +40,7 @@ assert any(row['section']=='file_type' for row in r) and any(row['section']=='un
 assert any(row['path'].endswith('/Developer/Safe/.build') and 'user' in row['protection'] for row in r)
 assert r[0]['status']=='partial'
 print('valid')
-''')
+'''.replace('OWNER',repr(OWNER)))
 check('CSV export parses correctly and includes protection, types and permission gaps',verified=='valid')
 press('设置与应用更新');press('移除保护 '+protect);press('nav-suggestions');s=dump('unprotected')
 check('removing custom protection keeps source and installer protected',s.count('AXCheckBox |  | 选择 .build | 0 |  | 0')==2 and s.count('AXCheckBox |  | 选择 .build | 0 |  | 1')==1)
