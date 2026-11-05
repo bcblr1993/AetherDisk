@@ -20,6 +20,7 @@ struct ContentView: View {
                         switch model.page {
                         case "large": LargeFilesPage(model: model)
                         case "types": FileTypesPage(model: model)
+                        case "projects": ProjectsPage(model: model)
                         case "suggestions": suggestionsPage
                         case "changes": changesPage
                         case "settings": DiskSettings(updater: updater, model: model)
@@ -42,6 +43,7 @@ struct ContentView: View {
             nav("overview", "磁盘概览", "square.grid.2x2")
             nav("large", "大文件", "doc.text.magnifyingglass")
             nav("types", "文件类型", "chart.bar.xaxis")
+            nav("projects", "工程洞察", "hammer.circle", count: model.result?.analysis?.projects.count ?? 0)
             nav("suggestions", "清理建议", "sparkles", count: model.recommendations.count)
             nav("changes", "占用变化", "chart.line.uptrend.xyaxis")
             Text("快速扫描").font(.system(size: 10, weight: .medium)).foregroundStyle(.tertiary).padding(.horizontal, 10).padding(.top, 18).padding(.bottom, 8)
@@ -73,7 +75,7 @@ struct ContentView: View {
     private var header: some View {
         HStack {
             VStack(alignment: .leading, spacing: 6) {
-                Text(model.page == "large" ? "大文件，直接找到。" : model.page == "types" ? "空间，都用在哪。" : model.page == "settings" ? "设置与更新" : model.page == "suggestions" ? "让空间，轻一点。" : model.page == "changes" ? "变化，有迹可循。" : "磁盘空间，一目了然。").font(.system(size: 24, weight: .semibold))
+                Text(model.page == "large" ? "大文件，直接找到。" : model.page == "types" ? "空间，都用在哪。" : model.page == "projects" ? "工程占用，一眼看透。" : model.page == "settings" ? "设置与更新" : model.page == "suggestions" ? "让空间，轻一点。" : model.page == "changes" ? "变化，有迹可循。" : "磁盘空间，一目了然。").font(.system(size: 24, weight: .semibold))
                 HStack(spacing: 6) { Image(systemName: "internaldrive"); Text(DiskFormat.compactPath(model.root.path)).lineLimit(1).truncationMode(.middle) }.font(.system(size: 11)).foregroundStyle(.secondary).help(model.root.path)
             }
             Spacer(minLength: 16)
@@ -82,7 +84,7 @@ struct ContentView: View {
             if model.scanning {
                 Button("停止扫描", role: .cancel) { model.cancel() }.controlSize(.regular)
             } else {
-                Button { model.start() } label: { Label(model.result == nil ? "开始扫描" : "重新扫描", systemImage: "arrow.clockwise") }.buttonStyle(DiskButtonStyle(kind: .primary)).controlSize(.regular).disabled(model.checking).accessibilityIdentifier("scan")
+                Button { model.start() } label: { Label(model.result == nil ? "开始扫描" : "重新扫描", systemImage: "arrow.clockwise") }.buttonStyle(DiskButtonStyle(kind: .primary)).controlSize(.regular).disabled(model.checking).keyboardShortcut("r", modifiers: .command).accessibilityIdentifier("scan")
             }
         }
     }
@@ -128,7 +130,11 @@ struct ContentView: View {
                             HStack { Text("文件夹 / 文件"); Spacer(); Text("占用 / 比例") }.font(.system(size: 10)).foregroundStyle(.tertiary)
                             if model.rows.isEmpty { Text(model.scanning ? "正在收集目录…" : "此目录没有可列出的文件，或访问受到限制。").font(.system(size: 12)).foregroundStyle(.secondary).padding(.vertical, 28) }
                             VStack(spacing: 2) {
-                                ForEach(Array(model.rows.prefix(40).enumerated()), id: \.element.id) { index, node in diskRow(model.protectedNode(node), index: index) }
+                                ForEach(Array(model.rows.prefix(model.rankingLimit).enumerated()), id: \.element.id) { index, node in diskRow(model.protectedNode(node), index: index) }
+                            }
+                            if model.rows.count > model.rankingLimit {
+                                Button("显示更多（已显示 \(model.rankingLimit) / \(model.rows.count) 项）") { model.rankingLimit += 60 }
+                                    .buttonStyle(DiskButtonStyle(kind: .quiet)).font(.system(size: 11)).padding(.top, 4).accessibilityIdentifier("ranking-show-more")
                             }
                         }
                     }.frame(maxWidth: .infinity)
@@ -194,6 +200,7 @@ struct ContentView: View {
                     Text(DiskFormat.compactPath(node.path)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(3).truncationMode(.middle).textSelection(.enabled)
                     Divider()
                     detail("已分配", DiskFormat.bytes(node.allocated)); detail("逻辑大小", DiskFormat.bytes(node.logical)); detail("文件数", node.fileCount.formatted())
+                    if let sparse = DiskFormat.sparsityNote(allocated: node.allocated, logical: node.logical) { Tag(text: sparse, color: .orange) }
                     if let ts = node.modifiedAt { detail("最近修改", Date(timeIntervalSince1970: TimeInterval(ts)).formatted(date: .abbreviated, time: .omitted)) }
                     if let delta = model.delta(node) { detail("较上次", (delta >= 0 ? "+" : "−") + DiskFormat.bytes(delta)) }
                     if !node.protection.isEmpty { Text(node.protection.map(\.title).sorted().joined(separator: " · ")).font(.system(size: 10)).foregroundStyle(.secondary).lineSpacing(4) }
@@ -239,7 +246,11 @@ struct ContentView: View {
                             Toggle("选择 \(r.node.name)", isOn: Binding(get: { model.selectedCaches.contains(r.id) }, set: { if $0 { model.selectedCaches.insert(r.id) } else { model.selectedCaches.remove(r.id) } })).labelsHidden().toggleStyle(.checkbox).disabled(r.blocked || !model.fresh || model.scanning || model.checking).padding(.top, 4)
                             Image(systemName: r.blocked ? "lock.shield.fill" : "shippingbox").font(.system(size: 18)).foregroundStyle(r.blocked ? Color.teal : DiskTheme.purple).frame(width: 30).padding(.top, 3)
                             VStack(alignment: .leading, spacing: 6) {
-                                HStack { Text(r.node.name).font(.system(size: 13, weight: .semibold)); Tag(text: r.blocked ? "已保护" : "需要确认", color: r.blocked ? .teal : DiskTheme.accent) }
+                                HStack {
+                                    Text(r.node.name).font(.system(size: 13, weight: .semibold))
+                                    Tag(text: r.blocked ? "已保护" : "需要确认", color: r.blocked ? .teal : DiskTheme.accent)
+                                    if r.isStale(days: 90) { Tag(text: "90 天未改", color: .orange) }
+                                }
                                 Text(DiskFormat.compactPath(r.id)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
                                 Text(r.blocked ? r.node.protection.map(\.title).sorted().joined(separator: " · ") : r.reason).font(.system(size: 11)).foregroundStyle(.secondary)
                             }
@@ -278,6 +289,32 @@ struct ContentView: View {
                     Text("再扫描一次，就能看见变化").font(.system(size: 17, weight: .semibold)).frame(maxWidth: .infinity)
                     Text("本次结果只保存在本机。下次扫描同一目录时，比较各项目的占用变化。").font(.system(size: 12)).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: .infinity).padding(.bottom, 40)
                 } else {
+                    HStack(spacing: 10) {
+                        DiskSearchField(placeholder: "搜索变化目录或路径", text: $model.comparisonQuery, identifier: "comparison-search")
+                        Picker("方向", selection: $model.comparisonDirection) {
+                            ForEach(ChangeDirection.allCases) { item in Text(item.title).tag(item) }
+                        }.pickerStyle(.segmented).labelsHidden().frame(width: 168).accessibilityIdentifier("comparison-direction")
+                        if model.baselineOptions.count > 1 {
+                            Picker("基线", selection: Binding(
+                                get: { model.previous?.scannedAt ?? Date.distantPast },
+                                set: { target in if let match = model.baselineOptions.first(where: { abs($0.scannedAt.timeIntervalSince(target)) < 0.001 }) { model.previous = match } }
+                            )) {
+                                ForEach(model.baselineOptions, id: \.scannedAt) { snap in
+                                    Text(snap.scannedAt.formatted(date: .abbreviated, time: .shortened)).tag(snap.scannedAt)
+                                }
+                            }.frame(width: 160).accessibilityIdentifier("comparison-baseline")
+                        }
+                    }.font(.system(size: 11))
+                    if let summary = model.comparisonSummary {
+                        HStack(spacing: 14) {
+                            Text("总变化 \((summary.allocatedDelta >= 0 ? "+" : "−") + DiskFormat.bytes(summary.allocatedDelta))").fontWeight(.medium)
+                            Text("增长 \(summary.grownCount) 项 · 减少 \(summary.shrunkCount) 项")
+                            Text("文件数 \((summary.filesDelta >= 0 ? "+" : "") + summary.filesDelta.formatted())")
+                        }.font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                    if model.changes.isEmpty {
+                        Text("没有符合当前筛选条件的变化目录。").font(.system(size: 12)).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.vertical, 28)
+                    }
                     ForEach(model.changes, id: \.0.id) { node, delta in
                         HStack {
                             Image(systemName: node.kind == .directory ? "folder" : "doc").foregroundStyle(DiskTheme.accent)

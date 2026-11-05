@@ -66,11 +66,89 @@ struct FileTypesPage: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack { Circle().fill(DiskTheme.colors[index % DiskTheme.colors.count]).frame(width: 8, height: 8); Text(usage.category.title).font(.system(size: 13, weight: .medium)); Text("\(usage.files.formatted()) 个文件").font(.system(size: 10)).foregroundStyle(.secondary); Spacer(); Text(DiskFormat.bytes(usage.allocated)).font(.system(size: 14, weight: .semibold, design: .rounded)); Text(String(format: "%.1f%%", Double(usage.allocated) / Double(total) * 100)).font(.system(size: 10)).foregroundStyle(.secondary).frame(width: 48, alignment: .trailing) }
                     GeometryReader { g in Capsule().fill(DiskTheme.colors[index % DiskTheme.colors.count].opacity(0.12)).overlay(alignment: .leading) { Capsule().fill(DiskTheme.colors[index % DiskTheme.colors.count]).frame(width: max(2, g.size.width * CGFloat(usage.allocated) / CGFloat(total))) } }.frame(height: 5)
+                    if !usage.extensions.isEmpty {
+                        HStack(spacing: 6) {
+                            ForEach(usage.extensions.prefix(6)) { ext in
+                                Button {
+                                    model.largeCategory = usage.category
+                                    model.largeQuery = ext.ext == "(无扩展名)" ? "" : "." + ext.ext
+                                    model.page = "large"
+                                } label: {
+                                    Text("\(ext.ext == "(无扩展名)" ? ext.ext : "." + ext.ext) \(DiskFormat.bytes(ext.allocated))")
+                                        .font(.system(size: 10)).padding(.horizontal, 6).padding(.vertical, 2)
+                                        .background(DiskTheme.inset, in: Capsule())
+                                }.buttonStyle(DiskButtonStyle(kind: .quiet))
+                            }
+                        }
+                    }
                     HStack { Text("逻辑大小 " + DiskFormat.bytes(usage.logical)).font(.system(size: 10)).foregroundStyle(.secondary); Spacer(); Button("查看此类大文件") { model.largeCategory = usage.category; model.page = "large" }.buttonStyle(DiskButtonStyle(kind: .quiet)).font(.system(size: 11)).foregroundStyle(DiskTheme.accent).accessibilityLabel("查看大文件 " + usage.category.title) }
                 }.padding(.vertical, 9)
             }
             if let r = model.result, !r.complete { Text("扫描不完整，统计仅包含已读取的文件。").font(.system(size: 11)).foregroundStyle(.orange) }
         } }
+    }
+}
+struct ProjectsPage: View {
+    @ObservedObject var model: AppModel
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Surface {
+                VStack(alignment: .leading, spacing: 12) {
+                    PanelTitle(title: "开发工程工作区洞察", caption: "\(model.projects.count) 个工程 · 按工程汇总构建缓存与陈旧度")
+                    HStack(spacing: 10) {
+                        DiskSearchField(placeholder: "搜索工程名称或路径", text: $model.projectQuery, identifier: "project-search")
+                        Picker("排序", selection: $model.projectSort) {
+                            ForEach(ProjectSort.allCases) { item in Text(item.title).tag(item) }
+                        }.pickerStyle(.segmented).labelsHidden().frame(width: 196).accessibilityIdentifier("project-sort")
+                    }.font(.system(size: 11))
+                    Text("自动识别包含 Git 或语言工程清单的项目根目录，汇总其总占用与可识别构建缓存占用。勾选缓存后仍需在清理建议页确认才移入废纸篓。").font(.system(size: 10)).foregroundStyle(.secondary)
+                }
+            }
+            Surface {
+                VStack(alignment: .leading, spacing: 10) {
+                    if model.result == nil {
+                        Text(model.scanning ? "正在扫描识别工程目录…" : "开始一次扫描，识别工作区内的开发工程。").font(.system(size: 12)).foregroundStyle(.secondary).padding(.vertical, 28)
+                    } else if model.projects.isEmpty {
+                        Text("当前扫描范围内未发现符合筛选条件的开发工程。").font(.system(size: 12)).foregroundStyle(.secondary).padding(.vertical, 28)
+                    }
+                    ForEach(model.projects) { project in
+                        HStack(alignment: .top, spacing: 12) {
+                            Image(systemName: "hammer.circle.fill").font(.system(size: 20)).foregroundStyle(DiskTheme.accent).frame(width: 28).padding(.top, 2)
+                            VStack(alignment: .leading, spacing: 5) {
+                                HStack(spacing: 6) {
+                                    Text(project.name).font(.system(size: 13, weight: .semibold))
+                                    Tag(text: project.markers.prefix(2).joined(separator: " · "), color: .teal)
+                                    if let ts = project.modifiedAt, ts <= Int64(Date().timeIntervalSince1970) - 90 * 86_400 {
+                                        Tag(text: "久未活跃", color: .orange)
+                                    }
+                                }
+                                Text(DiskFormat.compactPath(project.path)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                                HStack(spacing: 12) {
+                                    Text("\(project.fileCount.formatted()) 文件")
+                                    if project.cacheAllocated > 0 {
+                                        Text("构建缓存 \(DiskFormat.bytes(project.cacheAllocated))").foregroundStyle(DiskTheme.purple)
+                                    }
+                                    if let ts = project.modifiedAt {
+                                        Text("最近活跃 \(Date(timeIntervalSince1970: TimeInterval(ts)).formatted(date: .abbreviated, time: .omitted))")
+                                    }
+                                }.font(.system(size: 10)).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            VStack(alignment: .trailing, spacing: 6) {
+                                Text(DiskFormat.bytes(project.allocated)).font(.system(size: 14, weight: .semibold, design: .rounded)).monospacedDigit()
+                                HStack(spacing: 8) {
+                                    if !project.cachePaths.isEmpty {
+                                        Button("前往清理建议") { model.selectProjectCaches(project) }.buttonStyle(DiskButtonStyle(kind: .quiet)).font(.system(size: 10)).foregroundStyle(DiskTheme.purple)
+                                    }
+                                    Button("在 Finder 中显示") { model.reveal(project.path) }.buttonStyle(DiskButtonStyle(kind: .quiet)).font(.system(size: 10)).foregroundStyle(DiskTheme.accent)
+                                }
+                            }
+                        }.padding(.vertical, 10)
+                        if project.id != model.projects.last?.id { Divider().opacity(0.6) }
+                    }
+                }
+            }
+        }
     }
 }
 struct ScanIssuesView: View {

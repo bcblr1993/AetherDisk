@@ -168,4 +168,116 @@ final class AnalysisTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(history.first?.scannedAt, Date(timeIntervalSince1970: Double(1_700_000_000 + 6 * 60)))
     }
 
+    func testComparisonDirectionFilterSearchAndSummary() throws {
+        let home = root.appendingPathComponent("Home")
+        try file("Home/Alpha/a.bin", bytes: 16384)
+        try file("Home/Beta/b.bin", bytes: 32768)
+        let before = try DiskScanner.scan(root: home, home: home)
+        try file("Home/Alpha/a.bin", bytes: 65536)
+        try file("Home/Beta/b.bin", bytes: 4096)
+        let after = try DiskScanner.scan(root: home, home: home)
+
+        let grown = ScanComparison.changes(current: after, previous: before, depth: .top, direction: .grown)
+        let shrunk = ScanComparison.changes(current: after, previous: before, depth: .top, direction: .shrunk)
+        let searched = ScanComparison.changes(current: after, previous: before, depth: .top, direction: .all, query: "beta")
+        XCTAssertEqual(grown.map(\.0.name), ["Alpha"])
+        XCTAssertEqual(shrunk.map(\.0.name), ["Beta"])
+        XCTAssertEqual(searched.map(\.0.name), ["Beta"])
+
+        let summary = ScanComparison.summary(current: after, previous: before)
+        XCTAssertEqual(summary.allocatedDelta, after.allocated - before.allocated)
+        XCTAssertEqual(summary.filesDelta, after.files - before.files)
+        XCTAssertEqual(summary.grownCount, 1)
+        XCTAssertEqual(summary.shrunkCount, 1)
+    }
+
+    func testSubtreeModifiedAtPropagationAndDeepDirectoryRetention() throws {
+        let home = root.appendingPathComponent("Home")
+        let deepFile = try file("Home/L1/L2/L3/L4/L5/payload.bin", bytes: 5 * 1024 * 1024)
+        let oldDate = Date(timeIntervalSince1970: 1_600_000_000)
+        let newDate = Date(timeIntervalSince1970: 1_720_000_000)
+        for rel in ["Home/L1", "Home/L1/L2", "Home/L1/L2/L3", "Home/L1/L2/L3/L4", "Home/L1/L2/L3/L4/L5"] {
+            try FileManager.default.setAttributes([.modificationDate: oldDate], ofItemAtPath: root.appendingPathComponent(rel).path)
+        }
+        try FileManager.default.setAttributes([.modificationDate: newDate], ofItemAtPath: deepFile.path)
+
+        let result = try DiskScanner.scan(root: home, home: home)
+        let l1 = try XCTUnwrap(result.nodes.first { $0.name == "L1" })
+        XCTAssertEqual(l1.modifiedAt, Int64(newDate.timeIntervalSince1970))
+        let l4 = try XCTUnwrap(result.nodes.first { $0.name == "L4" })
+        XCTAssertTrue(HierarchyBrowser.canBrowse(l4, in: result))
+    }
+
+    func testReportIncludesRecommendationsSection() throws {
+        let home = root.appendingPathComponent("Home")
+        let cacheDir = try file("Home/Library/Caches/DemoApp/blob.bin", bytes: 8192).deletingLastPathComponent()
+        let result = try DiskScanner.scan(root: home, home: home)
+        let csv = ScanReport.csv(result, protectedPaths: [cacheDir.path])
+        XCTAssertTrue(csv.contains("\"recommendation\",\"\(cacheDir.path)\""))
+        XCTAssertTrue(csv.contains("\"user\""))
+    }
+
+    func testFileTypeExtensionBreakdownAndSparsityNote() throws {
+        try file("Media/clip1.mp4", bytes: 32768)
+        try file("Media/clip2.mp4", bytes: 16384)
+        try file("Media/trailer.mov", bytes: 8192)
+        try file("Releases/installer.dmg", bytes: 16384)
+        let result = try DiskScanner.scan(root: root)
+        let videoType = try XCTUnwrap(result.analysis?.fileTypes.first { $0.category == .video })
+        XCTAssertEqual(videoType.extensions.map(\.ext), ["mp4", "mov"])
+        XCTAssertEqual(videoType.extensions.first?.files, 2)
+
+        XCTAssertNotNil(DiskFormat.sparsityNote(allocated: 4096, logical: 64 * 1024 * 1024))
+        XCTAssertNil(DiskFormat.sparsityNote(allocated: 64 * 1024 * 1024, logical: 64 * 1024 * 1024))
+    }
+
+    func testProjectWorkspaceDetectionSortingAndCacheAggregation() throws {
+        let home = root.appendingPathComponent("Home")
+        try file("Home/IdeaProjects/AlphaService/Package.swift", bytes: 512)
+        try file("Home/IdeaProjects/AlphaService/Sources/main.swift", bytes: 4096)
+        try file("Home/IdeaProjects/AlphaService/.build/debug.bin", bytes: 65536)
+
+        let betaPkg = try file("Home/IdeaProjects/BetaWeb/package.json", bytes: 512)
+        let betaSrc = try file("Home/IdeaProjects/BetaWeb/src/index.ts", bytes: 4096)
+        let betaCache = try file("Home/IdeaProjects/BetaWeb/.next/cache/webpack.bin", bytes: 131072)
+        let oldDate = Date(timeIntervalSinceNow: -150 * 86_400)
+        for p in [
+            betaPkg, betaSrc, betaCache,
+            betaCache.deletingLastPathComponent(),
+            betaCache.deletingLastPathComponent().deletingLastPathComponent(),
+            betaSrc.deletingLastPathComponent(),
+            betaPkg.deletingLastPathComponent()
+        ] {
+            try FileManager.default.setAttributes([.modificationDate: oldDate], ofItemAtPath: p.path)
+        }
+        try file("Home/IdeaProjects/PlainFolder/notes.txt", bytes: 4096)
+
+        let result = try DiskScanner.scan(root: home, home: home)
+        let projects = try XCTUnwrap(result.analysis?.projects)
+        XCTAssertEqual(Set(projects.map(\.name)), ["AlphaService", "BetaWeb"])
+        XCTAssertEqual(ProjectWorkspaceQuery.rows(projects, sort: .cache).first?.name, "BetaWeb")
+        XCTAssertEqual(ProjectWorkspaceQuery.rows(projects, sort: .stale).first?.name, "BetaWeb")
+        XCTAssertEqual(ProjectWorkspaceQuery.rows(projects, query: "alpha").map(\.name), ["AlphaService"])
+        let beta = try XCTUnwrap(projects.first { $0.name == "BetaWeb" })
+        XCTAssertGreaterThanOrEqual(beta.cacheAllocated, 131072)
+        XCTAssertTrue(beta.cachePaths.contains { $0.hasSuffix("/BetaWeb/.next/cache") })
+    }
+
+    func testRecommendationCategoryTotalsAndStaleness() {
+        let now = Date(timeIntervalSince1970: 1_750_000_000)
+        let oldTs = Int64(now.timeIntervalSince1970) - 120 * 86_400
+        let newTs = Int64(now.timeIntervalSince1970) - 5 * 86_400
+        let recs = [
+            Recommendation(node: .init(path: "/h/Library/Caches/A", allocated: 300, modifiedAt: oldTs), category: .browser),
+            Recommendation(node: .init(path: "/h/Library/Caches/B", allocated: 200, modifiedAt: newTs), category: .browser),
+            Recommendation(node: .init(path: "/h/.cache/uv", allocated: 400, modifiedAt: oldTs), category: .compiler)
+        ]
+        let totals = RecommendationQuery.categoryTotals(recs)
+        XCTAssertEqual(totals.map(\.category), [.browser, .compiler])
+        XCTAssertEqual(totals.first?.allocated, 500)
+        XCTAssertEqual(totals.first?.count, 2)
+        XCTAssertTrue(recs[0].isStale(days: 90, referenceDate: now))
+        XCTAssertFalse(recs[1].isStale(days: 90, referenceDate: now))
+    }
+
 }

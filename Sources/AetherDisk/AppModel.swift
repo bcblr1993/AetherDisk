@@ -18,6 +18,11 @@ final class AppModel: ObservableObject {
     @Published var suggestionCategory: CacheCategory?
     @Published var suggestionQuery = ""
     @Published var comparisonDepth: ComparisonDepth = .top
+    @Published var comparisonDirection: ChangeDirection = .all
+    @Published var comparisonQuery = ""
+    @Published var projectSort: ProjectSort = .allocated
+    @Published var projectQuery = ""
+    @Published var rankingLimit = 40
     @Published var showIssues = false
     @Published var exporting = false
     @Published var page = "overview"
@@ -46,6 +51,23 @@ final class AppModel: ObservableObject {
     var filteredRecommendations: [Recommendation] {
         RecommendationQuery.rows(recommendations, filter: suggestionFilter, category: suggestionCategory, query: suggestionQuery)
     }
+    var recommendationCategoryTotals: [(category: CacheCategory, allocated: Int64, count: Int)] {
+        RecommendationQuery.categoryTotals(recommendations)
+    }
+    var projects: [ProjectSummary] {
+        let raw = (result?.analysis?.projects ?? []).map { p -> ProjectSummary in
+            var copy = p
+            if UserProtection.overlaps(p.path, protectedPaths: protectedPaths) { copy.protection.insert(.user) }
+            return copy
+        }
+        return ProjectWorkspaceQuery.rows(raw, sort: projectSort, query: projectQuery)
+    }
+    func selectProjectCaches(_ project: ProjectSummary) {
+        for path in project.cachePaths where recommendations.first(where: { $0.id == path })?.blocked == false {
+            selectedCaches.insert(path)
+        }
+        page = "suggestions"
+    }
     var activeScope: String { browsePath ?? (result?.root ?? root.path) }
     var isBrowsingSubfolder: Bool {
         guard let browsePath, let root = result?.root else { return false }
@@ -60,7 +82,7 @@ final class AppModel: ObservableObject {
         guard let result else { return }
         let target = path.map { URL(fileURLWithPath: $0).standardizedFileURL.path } ?? result.root
         browsePath = (target == result.root || !target.hasPrefix(result.root == "/" ? "/" : result.root + "/")) ? nil : target
-        query = ""
+        query = ""; rankingLimit = 40
         selectedPath = rows.first?.path
     }
     var largeFiles: [DiskNode] { LargeFileQuery.rows(result?.analysis?.largeFiles ?? [], query: largeQuery, category: largeCategory, minimum: largeMinimum, basis: largeBasis, staleDays: largeStaleDays).map { UserProtection.apply($0, paths: protectedPaths) } }
@@ -122,9 +144,19 @@ final class AppModel: ObservableObject {
         let filtered = items.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) }
         return rankingSort.sort(filtered)
     }
+    var baselineOptions: [ScanResult] {
+        history.filter { item in
+            guard let current = result else { return true }
+            return abs(item.scannedAt.timeIntervalSince(current.scannedAt)) > 0.001
+        }
+    }
+    var comparisonSummary: ComparisonSummary? {
+        guard let previous, let result, previous.root == result.root else { return nil }
+        return ScanComparison.summary(current: result, previous: previous)
+    }
     var changes: [(DiskNode, Int64)] {
         guard let previous, let result else { return [] }
-        return ScanComparison.changes(current: result, previous: previous, depth: comparisonDepth)
+        return ScanComparison.changes(current: result, previous: previous, depth: comparisonDepth, direction: comparisonDirection, query: comparisonQuery)
     }
     func delta(_ node: DiskNode) -> Int64? {
         guard previous?.root == result?.root, let old = previous?.nodes.first(where: { $0.path == node.path }) else { return nil }
@@ -143,7 +175,7 @@ final class AppModel: ObservableObject {
         token.cancel(); worker?.cancel(); token = .init(); let thisToken = token
         generation = UUID(); let id = generation
         root = (url ?? root).standardizedFileURL; let scope = root
-        query = ""; browsePath = nil; suggestionQuery = ""; plan = nil; showIssues = false
+        query = ""; browsePath = nil; rankingLimit = 40; suggestionQuery = ""; comparisonQuery = ""; plan = nil; showIssues = false
         volume = .read(at: root); history = loadHistory(root: root); previous = history.first
         result = nil; scanning = true; fresh = false; selectedCaches = []; selectedPath = nil; message = nil; progress = .init()
         let updateHandler: @Sendable (ScanProgress) -> Void = { [weak self] update in
@@ -231,6 +263,7 @@ final class AppModel: ObservableObject {
             try JSONEncoder().encode(result).write(to: snapshotURL(root: targetRoot), options: .atomic)
             let updated = ScanHistoryStore.append(result, into: loadHistory(root: targetRoot))
             try JSONEncoder().encode(updated).write(to: historyURL(root: targetRoot), options: .atomic)
+            history = updated
         } catch { message = "扫描已完成，但历史记录保存失败：\(error.localizedDescription)" }
     }
 }

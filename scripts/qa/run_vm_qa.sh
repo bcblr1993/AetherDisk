@@ -3,11 +3,15 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT_DIR"
 
+if ! tart list | awk '$2=="macos27" && $NF=="running"{found=1} END{exit !found}'; then
+  nohup tart run macos27 >/tmp/tart-macos27-qa.log 2>&1 &
+  sleep 8
+fi
 export AETHERDISK_VM_IP="${AETHERDISK_VM_IP:-$(tart ip --wait 30 macos27)}"
 export AETHERDISK_QA_ROOT="/Users/chenxu/AetherDisk-Release-QA-20261104"
 export AETHERDISK_QA_OWNER="/Users/chenxu/Applications/AetherDisk-Release-QA-20261104"
 export AETHERDISK_AX_BIN="/tmp/AetherDiskAX-20261104"
-export AETHERDISK_QA_OUT="$ROOT_DIR/outputs/qa-030"
+export AETHERDISK_QA_OUT="$ROOT_DIR/outputs/qa-050"
 mkdir -p "$AETHERDISK_QA_OUT"
 
 SSH_OPTS=(-i "$HOME/.ssh/id_ed25519" -o BatchMode=yes -o StrictHostKeyChecking=accept-new)
@@ -72,9 +76,10 @@ backup=Path(owner)/'preferences-before.plist'
 if backup.exists(): prefs.write_bytes(backup.read_bytes())
 elif prefs.exists(): prefs.unlink()
 for target in [str(root), str(root/'Documents'), str(root/'Empty')]:
-    key=hashlib.sha256(target.encode()).digest()[:12].hex()+'.json'
-    snap=Path.home()/'Library/Application Support/AetherDisk/Scans'/key
-    if snap.exists(): snap.unlink()
+    prefix=hashlib.sha256(target.encode()).digest()[:12].hex()
+    for suffix in ['.json', '-history.json']:
+        snap=Path.home()/'Library/Application Support/AetherDisk/Scans'/(prefix+suffix)
+        if snap.exists(): snap.unlink()
 if root.exists():
     for p in root.rglob('*'):
         try: p.chmod(0o700)
@@ -85,6 +90,8 @@ ax=Path('/tmp/AetherDiskAX-20261104')
 if ax.exists(): ax.unlink()
 print('VM clean complete')
 PY
+    tart stop macos27 >/dev/null 2>&1 || true
+    rm -f /tmp/tart-macos27-qa.log /tmp/tart-macos27-040.log
 }
 trap cleanup_vm EXIT
 
@@ -126,6 +133,8 @@ press('可检查')
 s=ax()
 check('v0.3.0 suggestion filter narrows to eligible items','Developer/Safe/.build' in s and 'Developer/Source/.build' not in s)
 press('全部')
+py("from pathlib import Path\nr=Path("+repr(ROOT)+")\n(r/'Documents/growth.data').write_bytes(b'g'*6*1024*1024)")
+press('scan');time.sleep(1)
 press('nav-changes')
 s=ax()
 check('v0.3.0 deep comparison toggle visible','comparison-depth' in s)
@@ -133,10 +142,24 @@ press('深层目录')
 s=ax()
 check('v0.3.0 deep comparison mode switches cleanly','Documents' in s)
 press('顶层目录')
-(out/'v030-ui-gate.json').write_text(json.dumps(checks,ensure_ascii=False,indent=2))
+s=ax()
+check('v0.4.0 comparison direction, search and baseline controls visible','comparison-direction' in s and 'comparison-search' in s and 'comparison-baseline' in s)
+press('仅增长')
+s=ax()
+check('v0.4.0 comparison direction filters grown folders','Documents' in s and '+2.0 MiB' in s)
+press('仅减少')
+s=ax()
+check('v0.4.0 comparison direction filters shrunk folders','Restricted' in s and 'Documents' not in s)
+press('全部')
+py("from pathlib import Path\nr=Path("+repr(ROOT)+")\n(r/'Documents/growth.data').write_bytes(b'g'*4*1024*1024)")
+press('nav-projects')
+s=ax()
+check('v0.5.0 project workspace lens controls and detected projects visible','project-search' in s and 'project-sort' in s and 'Safe' in s)
+(out/'v050-ui-gate.json').write_text(json.dumps(checks,ensure_ascii=False,indent=2))
 PY
 
 echo "[4/5] Capturing light and dark appearance screenshots..."
-PYTHONPATH="$ROOT_DIR/scripts/qa" python3 "$ROOT_DIR/scripts/qa/capture_release.py" "0.3.0-preview"
+PYTHONPATH="$ROOT_DIR/scripts/qa" python3 "$ROOT_DIR/scripts/qa/capture_release.py" "0.5.0-preview"
+rm -rf "$ROOT_DIR/outputs/screenshots/0.5.0-preview"
 echo '{"status":"passed"}' > "$AETHERDISK_QA_OUT/summary.json"
 echo "All VM QA gates and light/dark appearance captures succeeded!"

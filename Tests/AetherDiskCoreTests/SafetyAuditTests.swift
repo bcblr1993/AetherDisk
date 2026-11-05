@@ -195,6 +195,53 @@ final class SafetyAuditTests: XCTestCase, @unchecked Sendable {
         let result = try DiskScanner.scan(root: home, home: home)
         XCTAssertTrue(result.recommendations.contains { $0.id == lateCache.path })
     }
+
+    func testModernFrontendAndPackageManagerCacheRules() throws {
+        let iosSupport = try file("Home/Library/Developer/Xcode/iOS DeviceSupport/17.0/symbols.data").deletingLastPathComponent().deletingLastPathComponent()
+        let cargoCache = try file("Home/.cargo/registry/cache/crate.data").deletingLastPathComponent()
+        let cargoBin = try file("Home/.cargo/bin/cargo-tool").deletingLastPathComponent()
+        let pnpmStore = try file("Home/.pnpm-store/v3/blob.data").deletingLastPathComponent().deletingLastPathComponent()
+        let bunCache = try file("Home/.bun/install/cache/pkg.data").deletingLastPathComponent()
+        XCTAssertEqual(RuleCatalog.category(for: iosSupport, home: home), .xcode)
+        XCTAssertEqual(RuleCatalog.category(for: cargoCache, home: home), .compiler)
+        XCTAssertNil(RuleCatalog.category(for: cargoBin, home: home))
+        XCTAssertEqual(RuleCatalog.category(for: pnpmStore, home: home), .compiler)
+        XCTAssertEqual(RuleCatalog.category(for: bunCache, home: home), .compiler)
+        XCTAssertNoThrow(try SafetyInspector.inspect(cargoCache, home: home))
+
+        let nextCache = try file("Home/web-app/.next/cache/webpack.bin").deletingLastPathComponent()
+        let turboCache = try file("Home/web-app/.turbo/turbo.bin").deletingLastPathComponent()
+        let pytestCache = try file("Home/py-service/.pytest_cache/v.bin").deletingLastPathComponent()
+        XCTAssertNil(RuleCatalog.category(for: nextCache, home: home))
+        XCTAssertNil(RuleCatalog.category(for: turboCache, home: home))
+        XCTAssertNil(RuleCatalog.category(for: pytestCache, home: home))
+
+        try file("Home/web-app/package.json")
+        try file("Home/py-service/setup.py")
+        XCTAssertEqual(RuleCatalog.category(for: nextCache, home: home), .build)
+        XCTAssertEqual(RuleCatalog.category(for: turboCache, home: home), .build)
+        XCTAssertEqual(RuleCatalog.category(for: pytestCache, home: home), .build)
+    }
+
+    func testBulkDirectoryAttributeReaderMatchesStatAndPreservesHardlinkAndSymlinkRules() throws {
+        let dirURL = home.appendingPathComponent("BulkTest")
+        let reg = try file("Home/BulkTest/regular.bin", bytes: 12288)
+        try FileManager.default.linkItem(at: reg, to: dirURL.appendingPathComponent("hardlink.bin"))
+        try FileManager.default.createSymbolicLink(atPath: dirURL.appendingPathComponent("sym").path, withDestinationPath: "/Applications")
+        let handle = try DirectoryHandle(path: dirURL.path)
+        defer { close(handle.descriptor) }
+        let bulk = try handle.bulkEntries()
+        XCTAssertEqual(Set(bulk.map(\.name)), ["regular.bin", "hardlink.bin", "sym"])
+        let regEntry = try XCTUnwrap(bulk.first { $0.name == "regular.bin" })
+        var st = stat()
+        XCTAssertEqual(lstat(reg.path, &st), 0)
+        XCTAssertEqual(regEntry.ino, st.st_ino)
+        XCTAssertEqual(regEntry.allocated, Int64(st.st_blocks) * 512)
+        XCTAssertEqual(regEntry.logical, Int64(st.st_size))
+        XCTAssertEqual(regEntry.nlink, UInt32(st.st_nlink))
+        let symEntry = try XCTUnwrap(bulk.first { $0.name == "sym" })
+        XCTAssertTrue(symEntry.isSymlink)
+    }
 }
 private final class LockedCount: @unchecked Sendable {
     private let lock = NSLock(); private var count = 0

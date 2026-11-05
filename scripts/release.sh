@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 : "${AETHERDISK_UPDATE_FEED:?Set HTTPS production feed}"
 : "${AETHERDISK_UPDATE_PUBLIC_KEY:?Set production public key}"
 VERSION="${AETHERDISK_VERSION:-$(cat VERSION)}"
-BUILD="${AETHERDISK_BUILD:-2026110401}"
+BUILD="${AETHERDISK_BUILD:-2026110501}"
 OUT="$PWD/outputs/releases/$VERSION-$BUILD"
 IDENTITY='Developer ID Application: YanNan Chen (5984KQD4D7)'
 PROFILE="${NOTARY_PROFILE:-AetherRoute-Notary}"
@@ -22,11 +22,17 @@ codesign --force --options runtime --timestamp --sign "$IDENTITY" "$APP/Contents
 codesign --force --options runtime --timestamp --sign "$IDENTITY" "$APP"
 codesign --verify --deep --strict --verbose=2 "$APP"
 notarize() {
- xcrun notarytool submit "$1" --keychain-profile "$PROFILE" --wait --timeout 15m --output-format json > "$2"
- python3 - "$2" <<'PY'
+ for flag in --no-s3-acceleration --s3-acceleration --no-s3-acceleration; do
+  if xcrun notarytool submit "$1" "$flag" --keychain-profile "$PROFILE" --wait --timeout 15m --output-format json > "$2"; then
+   python3 - "$2" <<'PY'
 import sys,json
 r=json.load(open(sys.argv[1])); assert r.get('status')=='Accepted',r
 PY
+   return 0
+  fi
+  sleep 3
+ done
+ return 1
 }
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$OUT/notarization.zip"
 notarize "$OUT/notarization.zip" "$OUT/notarization-app.json"

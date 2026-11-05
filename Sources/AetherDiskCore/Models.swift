@@ -33,6 +33,10 @@ public struct Recommendation: Identifiable, Codable, Sendable {
     public var category: CacheCategory
     public var blocked: Bool { !node.protection.isEmpty || node.restricted }
     public var reason: String { category.reason }
+    public func isStale(days: Int = 90, referenceDate: Date = Date()) -> Bool {
+        guard days > 0, let ts = node.modifiedAt else { return false }
+        return ts <= Int64(referenceDate.timeIntervalSince1970) - Int64(days) * 86_400
+    }
 }
 public enum CacheCategory: String, Codable, Sendable, CaseIterable, Identifiable {
     case xcode, browser, compiler, update, build
@@ -96,6 +100,11 @@ public enum DiskFormat {
     }
     public static func compactPath(_ path: String, home: String = FileManager.default.homeDirectoryForCurrentUser.path) -> String {
         if path == home { return "~" }; if path.hasPrefix(home + "/") { return "~" + path.dropFirst(home.count) }; return path
+    }
+    public static func sparsityNote(allocated: Int64, logical: Int64) -> String? {
+        guard logical >= 1024 * 1024, allocated < logical / 2 else { return nil }
+        let ratio = Int((Double(allocated) / Double(max(1, logical))) * 100)
+        return "稀疏文件 · 实际块占用 \(ratio)%"
     }
 }
 public final class ScanCancellation: @unchecked Sendable {

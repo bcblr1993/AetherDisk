@@ -23,16 +23,63 @@ public enum FileCategory: String, Codable, CaseIterable, Sendable, Identifiable 
         return .other
     }
 }
+public struct ExtensionUsage: Codable, Sendable, Equatable, Identifiable {
+    public var id: String { ext }
+    public var ext: String
+    public var allocated: Int64 = 0
+    public var logical: Int64 = 0
+    public var files: Int = 0
+}
 public struct FileTypeUsage: Codable, Sendable, Identifiable {
     public var id: FileCategory { category }
     public var category: FileCategory
     public var allocated: Int64 = 0
     public var logical: Int64 = 0
     public var files: Int = 0
+    public var extensions: [ExtensionUsage] = []
+    enum CodingKeys: String, CodingKey { case category, allocated, logical, files, extensions }
+    public init(category: FileCategory, allocated: Int64 = 0, logical: Int64 = 0, files: Int = 0, extensions: [ExtensionUsage] = []) {
+        self.category = category; self.allocated = allocated; self.logical = logical; self.files = files; self.extensions = extensions
+    }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        category = try c.decode(FileCategory.self, forKey: .category)
+        allocated = try c.decode(Int64.self, forKey: .allocated)
+        logical = try c.decode(Int64.self, forKey: .logical)
+        files = try c.decode(Int.self, forKey: .files)
+        extensions = (try? c.decode([ExtensionUsage].self, forKey: .extensions)) ?? []
+    }
+}
+public struct ProjectSummary: Codable, Sendable, Equatable, Identifiable {
+    public var id: String { path }
+    public var path: String
+    public var name: String { URL(fileURLWithPath: path).lastPathComponent }
+    public var markers: [String]
+    public var allocated: Int64
+    public var logical: Int64
+    public var fileCount: Int
+    public var cacheAllocated: Int64
+    public var cachePaths: [String]
+    public var modifiedAt: Int64?
+    public var protection: Set<Protection>
+    public init(path: String, markers: [String], allocated: Int64, logical: Int64, fileCount: Int, cacheAllocated: Int64 = 0, cachePaths: [String] = [], modifiedAt: Int64? = nil, protection: Set<Protection> = []) {
+        self.path = path; self.markers = markers; self.allocated = allocated; self.logical = logical; self.fileCount = fileCount; self.cacheAllocated = cacheAllocated; self.cachePaths = cachePaths; self.modifiedAt = modifiedAt; self.protection = protection
+    }
 }
 public struct ScanAnalysis: Codable, Sendable {
     public var fileTypes: [FileTypeUsage]
     public var largeFiles: [DiskNode]
+    public var projects: [ProjectSummary]
+    enum CodingKeys: String, CodingKey { case fileTypes, largeFiles, projects }
+    public init(fileTypes: [FileTypeUsage], largeFiles: [DiskNode], projects: [ProjectSummary] = []) {
+        self.fileTypes = fileTypes; self.largeFiles = largeFiles; self.projects = projects
+    }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        fileTypes = try c.decode([FileTypeUsage].self, forKey: .fileTypes)
+        largeFiles = try c.decode([DiskNode].self, forKey: .largeFiles)
+        projects = (try? c.decode([ProjectSummary].self, forKey: .projects)) ?? []
+    }
 }
 public enum SizeBasis: String, CaseIterable, Sendable, Identifiable {
     case allocated, logical
@@ -81,6 +128,38 @@ public enum RecommendationQuery {
             return matchesFilter && matchesCategory && matchesQuery
         }
     }
+    public static func categoryTotals(_ items: [Recommendation]) -> [(category: CacheCategory, allocated: Int64, count: Int)] {
+        var map: [CacheCategory: (allocated: Int64, count: Int)] = [:]
+        for item in items {
+            let cur = map[item.category] ?? (0, 0)
+            map[item.category] = (cur.allocated + item.node.allocated, cur.count + 1)
+        }
+        return map.map { (category: $0.key, allocated: $0.value.allocated, count: $0.value.count) }
+            .sorted { $0.allocated == $1.allocated ? $0.category.rawValue < $1.category.rawValue : $0.allocated > $1.allocated }
+    }
+}
+public enum ProjectSort: String, CaseIterable, Sendable, Identifiable {
+    case allocated, cache, stale
+    public var id: String { rawValue }
+    public var title: String {
+        switch self { case .allocated: "总占用"; case .cache: "构建缓存"; case .stale: "久未活跃" }
+    }
+}
+public enum ProjectWorkspaceQuery {
+    public static func rows(_ items: [ProjectSummary], sort: ProjectSort = .allocated, query: String = "") -> [ProjectSummary] {
+        items.filter { item in
+            query.isEmpty || item.name.localizedCaseInsensitiveContains(query) || item.path.localizedCaseInsensitiveContains(query)
+        }.sorted { a, b in
+            switch sort {
+            case .allocated: return a.allocated == b.allocated ? a.path < b.path : a.allocated > b.allocated
+            case .cache: return a.cacheAllocated == b.cacheAllocated ? (a.allocated == b.allocated ? a.path < b.path : a.allocated > b.allocated) : a.cacheAllocated > b.cacheAllocated
+            case .stale:
+                let ma = a.modifiedAt ?? Int64.max
+                let mb = b.modifiedAt ?? Int64.max
+                return ma == mb ? (a.allocated == b.allocated ? a.path < b.path : a.allocated > b.allocated) : ma < mb
+            }
+        }
+    }
 }
 public enum HierarchyBrowser {
     public static func canBrowse(_ node: DiskNode, in result: ScanResult?) -> Bool {
@@ -107,12 +186,19 @@ public enum HierarchyBrowser {
 // Kept separate from the directory display budget: metadata beyond 20,000 nodes still contributes.
 struct AnalysisAccumulator {
     var types: [FileCategory: FileTypeUsage] = [:]
+    var extMap: [FileCategory: [String: ExtensionUsage]] = [:]
     var physical: [DiskNode] = []; var logical: [DiskNode] = []
     var physicalFloor: Int64 = 0; var logicalFloor: Int64 = 0
     mutating func record(_ node: DiskNode) {
         let category = FileCategory.classify(node.name, allocated: node.allocated)
         var usage = types[category] ?? .init(category: category)
         usage.allocated += node.allocated; usage.logical += node.logical; usage.files += 1; types[category] = usage
+        let rawExt = (node.name.lowercased() as NSString).pathExtension
+        let extKey = rawExt.isEmpty ? "(无扩展名)" : rawExt
+        var catExts = extMap[category] ?? [:]
+        var extUsage = catExts[extKey] ?? .init(ext: extKey)
+        extUsage.allocated += node.allocated; extUsage.logical += node.logical; extUsage.files += 1
+        catExts[extKey] = extUsage; extMap[category] = catExts
         if node.allocated >= 1024 * 1024 && (physical.count < 200 || node.allocated >= physicalFloor) {
             physical.append(node)
             if physical.count >= 400 { physical.sort { $0.allocated > $1.allocated }; physical = Array(physical.prefix(200)); physicalFloor = physical.last?.allocated ?? 0 }
@@ -122,10 +208,16 @@ struct AnalysisAccumulator {
             if logical.count >= 400 { logical.sort { $0.logical > $1.logical }; logical = Array(logical.prefix(200)); logicalFloor = logical.last?.logical ?? 0 }
         }
     }
-    func result() -> ScanAnalysis {
+    func result(projects: [ProjectSummary] = []) -> ScanAnalysis {
         let top = Array(physical.sorted { $0.allocated > $1.allocated }.prefix(200)) + Array(logical.sorted { $0.logical > $1.logical }.prefix(200))
         let unique = Dictionary(top.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
-        return .init(fileTypes: types.values.sorted { $0.allocated == $1.allocated ? $0.category.rawValue < $1.category.rawValue : $0.allocated > $1.allocated }, largeFiles: unique.values.sorted { $0.allocated == $1.allocated ? $0.path < $1.path : $0.allocated > $1.allocated })
+        let enrichedTypes = types.values.map { item -> FileTypeUsage in
+            var copy = item
+            let exts = (extMap[item.category]?.values.sorted { $0.allocated == $1.allocated ? $0.ext < $1.ext : $0.allocated > $1.allocated }) ?? []
+            copy.extensions = Array(exts.prefix(10))
+            return copy
+        }.sorted { $0.allocated == $1.allocated ? $0.category.rawValue < $1.category.rawValue : $0.allocated > $1.allocated }
+        return .init(fileTypes: enrichedTypes, largeFiles: unique.values.sorted { $0.allocated == $1.allocated ? $0.path < $1.path : $0.allocated > $1.allocated }, projects: projects)
     }
 }
 public enum UserProtection {
