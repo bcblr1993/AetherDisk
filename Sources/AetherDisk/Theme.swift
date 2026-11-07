@@ -101,7 +101,24 @@ private struct DiskButtonChrome: View {
 }
 struct DiskSidebarButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label.background(DiskTheme.accent.opacity(configuration.isPressed ? 0.09 : 0), in: RoundedRectangle(cornerRadius: DiskTheme.controlRadius))
+        DiskSidebarButtonChrome(configuration: configuration)
+    }
+}
+private struct DiskSidebarButtonChrome: View {
+    let configuration: ButtonStyleConfiguration
+    @Environment(\.isEnabled) private var enabled
+    @State private var hovering = false
+    var body: some View {
+        configuration.label
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                DiskTheme.accent.opacity(configuration.isPressed ? 0.14 : hovering ? 0.065 : 0),
+                in: RoundedRectangle(cornerRadius: 9)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 9))
+            .opacity(enabled ? 1 : 0.45)
+            .onHover { hovering = $0 }
+            .animation(.easeOut(duration: 0.12), value: hovering)
     }
 }
 struct DiskDialog<Content: View, Actions: View>: View {

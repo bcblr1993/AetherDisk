@@ -111,14 +111,15 @@ public enum ScanTrendAnalyzer {
         var hotspots: [GrowthHotspot] = []
         for path in candidatePaths {
             let series = ordered.map { snap in snap.nodes.first { $0.path == path }?.allocated ?? 0 }
-            var monotonic = true
             var grows = 0
-            for idx in 1..<series.count {
-                if series[idx] > series[idx - 1] { grows += 1 }
-                else { monotonic = false; break }
+            var idx = series.count - 1
+            while idx > 0 && series[idx] > series[idx - 1] {
+                grows += 1
+                idx -= 1
             }
-            if monotonic && grows >= 2, let first = series.first, let last = series.last, last > first {
-                hotspots.append(GrowthHotspot(path: path, currentAllocated: last, totalGrowth: last - first, consecutiveGrows: grows))
+            let streakStart = series[idx]
+            if grows >= 2, let last = series.last, last > streakStart {
+                hotspots.append(GrowthHotspot(path: path, currentAllocated: last, totalGrowth: last - streakStart, consecutiveGrows: grows))
             }
         }
         return hotspots.sorted { $0.totalGrowth == $1.totalGrowth ? $0.path < $1.path : $0.totalGrowth > $1.totalGrowth }

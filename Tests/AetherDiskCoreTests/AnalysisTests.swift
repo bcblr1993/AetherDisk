@@ -445,4 +445,77 @@ final class AnalysisTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(diffText.contains("A"))
     }
 
+    func testHierarchyBrowserNextActionSelectsThenDrillsDown() {
+        let dirWithChild = DiskNode(path: "/work/Projects", kind: .directory, allocated: 2048)
+        let child = DiskNode(path: "/work/Projects/App", kind: .directory, allocated: 1024)
+        let emptyDir = DiskNode(path: "/work/Empty", kind: .directory, allocated: 0)
+        let fileNode = DiskNode(path: "/work/readme.md", kind: .file, allocated: 512)
+        let scan = ScanResult(root: "/work", scannedAt: Date(), duration: 0.1, allocated: 2560, logical: 2560, files: 1, directories: 3, unreadable: 0, issues: [], nodes: [dirWithChild, child, emptyDir, fileNode], recommendations: [], cancelled: false)
+
+        let firstClick = HierarchyBrowser.nextBrowseAction(for: dirWithChild, selectedPath: nil, in: scan)
+        XCTAssertEqual(firstClick.selectedPath, "/work/Projects")
+        XCTAssertNil(firstClick.browseTo)
+
+        let secondClick = HierarchyBrowser.nextBrowseAction(for: dirWithChild, selectedPath: "/work/Projects", in: scan)
+        XCTAssertEqual(secondClick.selectedPath, "/work/Projects")
+        XCTAssertEqual(secondClick.browseTo, "/work/Projects")
+
+        let emptySecondClick = HierarchyBrowser.nextBrowseAction(for: emptyDir, selectedPath: "/work/Empty", in: scan)
+        XCTAssertNil(emptySecondClick.browseTo)
+
+        let fileSecondClick = HierarchyBrowser.nextBrowseAction(for: fileNode, selectedPath: "/work/readme.md", in: scan)
+        XCTAssertNil(fileSecondClick.browseTo)
+    }
+
+    func testSpaceMapBlockPropagatesProtectionState() {
+        let rawNodes = [
+            DiskNode(path: "/work/SourceRepo", allocated: 600, protection: [.git]),
+            DiskNode(path: "/work/CustomVault", allocated: 400)
+        ]
+        let protectedNodes = rawNodes.map { UserProtection.apply($0, paths: ["/work/CustomVault"]) }
+        let blocks = SpaceMapLayout.blocks(for: protectedNodes)
+        XCTAssertEqual(blocks.count, 2)
+        XCTAssertTrue(blocks[0].isProtected)
+        XCTAssertTrue(blocks[1].isProtected)
+    }
+
+    func testTrailingConsecutiveGrowthHotspotsAfterEarlierShrink() {
+        func makeSnap(ts: TimeInterval, logs: Int64) -> ScanResult {
+            ScanResult(
+                root: "/work",
+                scannedAt: Date(timeIntervalSince1970: ts),
+                duration: 0.1,
+                allocated: logs,
+                logical: logs,
+                files: 5,
+                directories: 2,
+                unreadable: 0,
+                issues: [],
+                nodes: [DiskNode(path: "/work/Logs", kind: .directory, allocated: logs)],
+                recommendations: [],
+                cancelled: false
+            )
+        }
+        let s1 = makeSnap(ts: 1_700_000_000, logs: 500)
+        let s2 = makeSnap(ts: 1_700_086_400, logs: 200) // shrank earlier
+        let s3 = makeSnap(ts: 1_700_172_800, logs: 450) // grew 1
+        let s4 = makeSnap(ts: 1_700_259_200, logs: 900) // grew 2
+        let hotspots = ScanTrendAnalyzer.growthHotspots(from: [s4, s3, s2, s1])
+        XCTAssertEqual(hotspots.count, 1)
+        XCTAssertEqual(hotspots.first?.name, "Logs")
+        XCTAssertEqual(hotspots.first?.consecutiveGrows, 2)
+        XCTAssertEqual(hotspots.first?.totalGrowth, 700)
+    }
+
+    func testCLIScanOptionsExpandsTildeAndRejectsMalformedFlags() throws {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let opts = try ScanCLIOptions.parse(["~/Downloads", "--json", "~/out.json"])
+        XCTAssertEqual(opts.rootPath, home + "/Downloads")
+        XCTAssertEqual(opts.jsonPath, home + "/out.json")
+
+        XCTAssertThrowsError(try ScanCLIOptions.parse(["/tmp", "--top", "0"]))
+        XCTAssertThrowsError(try ScanCLIOptions.parse(["/tmp", "--json"]))
+        XCTAssertThrowsError(try ScanCLIOptions.parse(["/tmp", "--unknown-flag"]))
+    }
+
 }

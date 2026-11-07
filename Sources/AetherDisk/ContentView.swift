@@ -51,7 +51,11 @@ struct ContentView: View {
             location("下载", "arrow.down.circle", FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads"))
             location("文稿", "doc.text", FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents"))
             location("开发项目", "hammer", FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("IdeaProjects"))
-            Button { model.chooseFolder() } label: { Label("选择文件夹…", systemImage: "folder.badge.plus").font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading).padding(10) }.buttonStyle(DiskSidebarButtonStyle()).foregroundStyle(.secondary).disabled(model.checking)
+            Button { model.chooseFolder() } label: {
+                HStack(spacing: 10) { Image(systemName: "folder.badge.plus").frame(width: 17); Text("选择文件夹…"); Spacer() }
+                    .font(.system(size: 12)).padding(.horizontal, 10).padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading).contentShape(RoundedRectangle(cornerRadius: 9))
+            }.buttonStyle(DiskSidebarButtonStyle()).foregroundStyle(.secondary).disabled(model.checking)
             Spacer()
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 7) { Image(systemName: "lock.shield").foregroundStyle(DiskTheme.accent); Text("文件留在你的 Mac").font(.system(size: 11, weight: .medium)) }
@@ -65,12 +69,18 @@ struct ContentView: View {
         Button { model.page = id } label: {
             HStack(spacing: 10) { Image(systemName: icon).frame(width: 17); Text(title); Spacer(); if count > 0 { Text("\(count)").font(.system(size: 10, weight: .medium)).padding(.horizontal, 6).padding(.vertical, 2).background(DiskTheme.accent.opacity(0.1), in: Capsule()) } }
                 .font(.system(size: 12, weight: model.page == id ? .semibold : .regular)).padding(.horizontal, 10).padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .foregroundStyle(model.page == id ? DiskTheme.accent : Color.secondary)
                 .background(model.page == id ? DiskTheme.accent.opacity(0.1) : .clear, in: RoundedRectangle(cornerRadius: 9))
+                .contentShape(RoundedRectangle(cornerRadius: 9))
         }.buttonStyle(DiskSidebarButtonStyle()).accessibilityIdentifier("nav-" + id)
     }
     private func location(_ name: String, _ symbol: String, _ url: URL) -> some View {
-        Button { model.page = "overview"; model.start(url) } label: { Label(name, systemImage: symbol).font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading).padding(10) }.buttonStyle(DiskSidebarButtonStyle()).foregroundStyle(.secondary).disabled(model.checking)
+        Button { model.page = "overview"; model.start(url) } label: {
+            HStack(spacing: 10) { Image(systemName: symbol).frame(width: 17); Text(name); Spacer() }
+                .font(.system(size: 12)).padding(.horizontal, 10).padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading).contentShape(RoundedRectangle(cornerRadius: 9))
+        }.buttonStyle(DiskSidebarButtonStyle()).foregroundStyle(.secondary).disabled(model.checking)
     }
     private var header: some View {
         HStack {
@@ -135,8 +145,9 @@ struct ContentView: View {
                                                 RoundedRectangle(cornerRadius: 4)
                                                     .fill(block.isTailGroup ? Color.secondary.opacity(0.32) : DiskTheme.colors[idx % DiskTheme.colors.count].opacity(0.85))
                                                     .frame(width: max(6, geo.size.width * CGFloat(block.fraction)))
+                                                    .contentShape(Rectangle())
                                                     .help("\(block.title) · \(DiskFormat.bytes(block.allocated)) (\(String(format: "%.1f%%", block.fraction * 100)))")
-                                                    .onTapGesture { if let p = block.path { model.selectedPath = p } }
+                                                    .onTapGesture { model.handleSpaceMapTap(block) }
                                             }
                                         }
                                     }.frame(height: 12)
@@ -144,10 +155,11 @@ struct ContentView: View {
                                         HStack(spacing: 6) {
                                             ForEach(Array(model.spaceMapBlocks.enumerated()), id: \.element.id) { idx, block in
                                                 Button {
-                                                    if let p = block.path { model.selectedPath = p }
+                                                    model.handleSpaceMapTap(block)
                                                 } label: {
                                                     HStack(spacing: 4) {
                                                         Circle().fill(block.isTailGroup ? Color.secondary : DiskTheme.colors[idx % DiskTheme.colors.count]).frame(width: 6, height: 6)
+                                                        if block.isProtected { Image(systemName: "lock.shield.fill").font(.system(size: 8)).foregroundStyle(.teal) }
                                                         Text("\(block.title) \(String(format: "%.0f%%", block.fraction * 100))").font(.system(size: 10))
                                                     }.padding(.horizontal, 6).padding(.vertical, 2).background(DiskTheme.inset, in: Capsule())
                                                 }.buttonStyle(DiskButtonStyle(kind: .quiet))
@@ -159,7 +171,7 @@ struct ContentView: View {
                             HStack { Text("文件夹 / 文件"); Spacer(); Text("占用 / 比例") }.font(.system(size: 10)).foregroundStyle(.tertiary)
                             if model.rows.isEmpty { Text(model.scanning ? "正在收集目录…" : "此目录没有可列出的文件，或访问受到限制。").font(.system(size: 12)).foregroundStyle(.secondary).padding(.vertical, 28) }
                             VStack(spacing: 2) {
-                                ForEach(Array(model.rows.prefix(model.rankingLimit).enumerated()), id: \.element.id) { index, node in diskRow(model.protectedNode(node), index: index) }
+                                ForEach(Array(model.rows.prefix(model.rankingLimit).enumerated()), id: \.element.id) { index, node in diskRow(node, index: index) }
                             }
                             if model.rows.count > model.rankingLimit {
                                 Button("显示更多（已显示 \(model.rankingLimit) / \(model.rows.count) 项）") { model.rankingLimit += 60 }
@@ -219,8 +231,8 @@ struct ContentView: View {
             if model.canBrowse(node) { Button { model.browse(node.path) } label: { Image(systemName: "arrow.turn.down.right").font(.system(size: 10)).foregroundStyle(.secondary) }.buttonStyle(DiskButtonStyle(kind: .quiet)).help("展开 \(node.name)").accessibilityLabel("展开 \(node.name)") }
             if node.kind == .directory { Button { model.start(URL(fileURLWithPath: node.path)) } label: { Image(systemName: "chevron.right").font(.system(size: 10)).foregroundStyle(.tertiary) }.buttonStyle(DiskButtonStyle(kind: .quiet)).help("扫描 \(node.name)").accessibilityLabel("扫描 \(node.name)") } else { Color.clear.frame(width: 6) }
         }.padding(.horizontal, 8).padding(.vertical, 5).background(model.selectedPath == node.path ? DiskTheme.accent.opacity(0.07) : .clear, in: RoundedRectangle(cornerRadius: 9))
-            .contentShape(Rectangle()).onTapGesture { model.selectedPath = node.path }
-            .contextMenu { Button("在 Finder 中显示") { model.reveal(node.path) }; if model.canBrowse(node) { Button("展开此层级") { model.browse(node.path) } }; if node.kind == .directory { Button("保护此目录") { model.addProtection(node.path) }.disabled(model.checking); Button("扫描此文件夹") { model.start(URL(fileURLWithPath: node.path)) } } }
+            .contentShape(Rectangle()).onTapGesture { model.handleNodeTap(node) }
+            .contextMenu { Button("在 Finder 中显示") { model.reveal(node.path) }; Button("复制路径") { model.copyPath(node.path) }; if model.canBrowse(node) { Button("展开此层级") { model.browse(node.path) } }; if node.kind == .directory { Button("保护此目录") { model.addProtection(node.path) }.disabled(model.checking); Button("扫描此文件夹") { model.start(URL(fileURLWithPath: node.path)) } } }
     }
     private var inspector: some View {
         Surface {
@@ -236,7 +248,12 @@ struct ContentView: View {
                     if let ts = node.modifiedAt { detail("最近修改", Date(timeIntervalSince1970: TimeInterval(ts)).formatted(date: .abbreviated, time: .omitted)) }
                     if let delta = model.delta(node) { detail("较上次", (delta >= 0 ? "+" : "−") + DiskFormat.bytes(delta)) }
                     if !node.protection.isEmpty { Text(node.protection.map(\.title).sorted().joined(separator: " · ")).font(.system(size: 10)).foregroundStyle(.secondary).lineSpacing(4) }
-                    Button { model.reveal(node.path) } label: { Label("在 Finder 中显示", systemImage: "arrow.up.forward.app") }.font(.system(size: 11)).controlSize(.small)
+                    HStack(spacing: 8) {
+                        if model.canBrowse(node) {
+                            Button { model.browse(node.path) } label: { Label("展开此目录", systemImage: "arrow.turn.down.right") }.font(.system(size: 11)).controlSize(.small)
+                        }
+                        Button { model.reveal(node.path) } label: { Label("在 Finder 中显示", systemImage: "arrow.up.forward.app") }.font(.system(size: 11)).controlSize(.small)
+                    }
                 } else { Text("选择一项，查看大小和保护状态。").font(.system(size: 12)).foregroundStyle(.secondary).padding(.vertical, 20) }
             }.frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -306,12 +323,15 @@ struct ContentView: View {
                                     Tag(text: r.blocked ? "已保护" : "需要确认", color: r.blocked ? .teal : DiskTheme.accent)
                                     if r.isStale(days: 90) { Tag(text: "90 天未改", color: .orange) }
                                 }
-                                Text(DiskFormat.compactPath(r.id)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                                Text(DiskFormat.compactPath(r.id)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).help(r.id)
                                 Text(r.blocked ? r.node.protection.map(\.title).sorted().joined(separator: " · ") : r.reason).font(.system(size: 11)).foregroundStyle(.secondary)
                             }
                             Spacer()
                             VStack(alignment: .trailing, spacing: 9) { Text(DiskFormat.bytes(r.node.allocated)).font(.system(size: 14, weight: .semibold, design: .rounded)); Button("查看位置") { model.reveal(r.id) }.buttonStyle(DiskButtonStyle(kind: .quiet)).font(.system(size: 10)).foregroundStyle(DiskTheme.accent) }
-                        }.padding(.vertical, 16)
+                        }.padding(.vertical, 16).contentShape(Rectangle()).onTapGesture {
+                            guard !r.blocked && model.fresh && !model.scanning && !model.checking else { return }
+                            if model.selectedCaches.contains(r.id) { model.selectedCaches.remove(r.id) } else { model.selectedCaches.insert(r.id) }
+                        }.contextMenu { Button("在 Finder 中显示") { model.reveal(r.id) }; Button("复制路径") { model.copyPath(r.id) } }
                         if r.id != model.filteredRecommendations.last?.id { Divider().opacity(0.65) }
                     }
                 }
@@ -402,11 +422,13 @@ struct ContentView: View {
                             Image(systemName: node.kind == .directory ? "folder" : "doc").foregroundStyle(DiskTheme.accent)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(node.name).font(.system(size: 12))
-                                if model.comparisonDepth == .deep { Text(DiskFormat.compactPath(node.path)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle) }
+                                if model.comparisonDepth == .deep { Text(DiskFormat.compactPath(node.path)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).help(node.path) }
                             }
                             Spacer()
                             Text((delta > 0 ? "+" : delta < 0 ? "−" : "") + DiskFormat.bytes(delta)).font(.system(size: 13, weight: .medium, design: .rounded)).monospacedDigit().foregroundStyle(delta > 0 ? Color.orange : delta < 0 ? .teal : .secondary)
-                        }.padding(.vertical, 10)
+                            Button("在 Finder 中显示") { model.reveal(node.path) }.buttonStyle(DiskButtonStyle(kind: .quiet)).font(.system(size: 10)).foregroundStyle(.secondary)
+                        }.padding(.vertical, 10).contentShape(Rectangle())
+                            .contextMenu { Button("在 Finder 中显示") { model.reveal(node.path) }; Button("复制路径") { model.copyPath(node.path) } }
                         Divider()
                     }
                 }

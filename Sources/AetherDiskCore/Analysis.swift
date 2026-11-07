@@ -207,6 +207,12 @@ public enum HierarchyBrowser {
         guard node.kind == .directory, let result else { return false }
         return result.nodes.contains { $0.parent == node.path && $0.path != node.path }
     }
+    public static func nextBrowseAction(for node: DiskNode, selectedPath: String?, in result: ScanResult?) -> (selectedPath: String, browseTo: String?) {
+        if selectedPath == node.path && canBrowse(node, in: result) {
+            return (node.path, node.path)
+        }
+        return (node.path, nil)
+    }
     public static func breadcrumbs(root: String, current: String) -> [(name: String, path: String)] {
         let stdRoot = URL(fileURLWithPath: root).standardizedFileURL.path
         let stdCurrent = URL(fileURLWithPath: current).standardizedFileURL.path
@@ -289,6 +295,7 @@ public struct SpaceMapBlock: Sendable, Equatable, Identifiable {
     public var allocated: Int64
     public var fraction: Double
     public var isDirectory: Bool
+    public var isProtected: Bool
     public var isTailGroup: Bool
     public var groupedCount: Int
 }
@@ -311,11 +318,12 @@ public enum SpaceMapLayout {
             primary.append(single); tail.removeAll()
         }
         var result = primary.map { node in
-            SpaceMapBlock(id: node.path, title: node.name, path: node.path, allocated: node.allocated, fraction: Double(node.allocated) / Double(total), isDirectory: node.kind == .directory, isTailGroup: false, groupedCount: 1)
+            SpaceMapBlock(id: node.path, title: node.name, path: node.path, allocated: node.allocated, fraction: Double(node.allocated) / Double(total), isDirectory: node.kind == .directory, isProtected: !node.protection.isEmpty, isTailGroup: false, groupedCount: 1)
         }
         if !tail.isEmpty {
             let tailAlloc = tail.reduce(Int64(0)) { $0 + $1.allocated }
-            result.append(SpaceMapBlock(id: "__tail__", title: "其余 \(tail.count) 项", path: nil, allocated: tailAlloc, fraction: Double(tailAlloc) / Double(total), isDirectory: false, isTailGroup: true, groupedCount: tail.count))
+            let anyProtected = tail.contains { !$0.protection.isEmpty }
+            result.append(SpaceMapBlock(id: "__tail__", title: "其余 \(tail.count) 项", path: nil, allocated: tailAlloc, fraction: Double(tailAlloc) / Double(total), isDirectory: false, isProtected: anyProtected, isTailGroup: true, groupedCount: tail.count))
         }
         return result
     }
@@ -326,17 +334,30 @@ public struct ScanCLIOptions: Sendable, Equatable {
     public var csvPath: String?
     public var comparePath: String?
     public var topLimit: Int
+    private static func expand(_ raw: String) -> String {
+        NSString(string: raw).expandingTildeInPath
+    }
     public static func parse(_ args: [String]) throws -> ScanCLIOptions {
-        guard let first = args.first, !first.hasPrefix("-") else { throw ScanFailure.invalidRoot }
-        var opts = ScanCLIOptions(rootPath: first, jsonPath: nil, csvPath: nil, comparePath: nil, topLimit: 15)
+        guard let first = args.first, !first.hasPrefix("-"), !first.isEmpty else { throw ScanFailure.invalidRoot }
+        var opts = ScanCLIOptions(rootPath: expand(first), jsonPath: nil, csvPath: nil, comparePath: nil, topLimit: 15)
         var i = 1
         while i < args.count {
             let flag = args[i]
-            if flag == "--json", i + 1 < args.count { opts.jsonPath = args[i + 1]; i += 2 }
-            else if flag == "--csv", i + 1 < args.count { opts.csvPath = args[i + 1]; i += 2 }
-            else if flag == "--compare", i + 1 < args.count { opts.comparePath = args[i + 1]; i += 2 }
-            else if flag == "--top", i + 1 < args.count, let n = Int(args[i + 1]), n > 0 { opts.topLimit = min(200, n); i += 2 }
-            else { i += 1 }
+            if flag == "--json" {
+                guard i + 1 < args.count, !args[i + 1].hasPrefix("-") else { throw ScanFailure.invalidRoot }
+                opts.jsonPath = expand(args[i + 1]); i += 2
+            } else if flag == "--csv" {
+                guard i + 1 < args.count, !args[i + 1].hasPrefix("-") else { throw ScanFailure.invalidRoot }
+                opts.csvPath = expand(args[i + 1]); i += 2
+            } else if flag == "--compare" {
+                guard i + 1 < args.count, !args[i + 1].hasPrefix("-") else { throw ScanFailure.invalidRoot }
+                opts.comparePath = expand(args[i + 1]); i += 2
+            } else if flag == "--top" {
+                guard i + 1 < args.count, let n = Int(args[i + 1]), n > 0 else { throw ScanFailure.invalidRoot }
+                opts.topLimit = min(200, n); i += 2
+            } else {
+                throw ScanFailure.invalidRoot
+            }
         }
         return opts
     }

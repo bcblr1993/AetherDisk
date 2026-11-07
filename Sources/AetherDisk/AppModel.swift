@@ -163,9 +163,22 @@ final class AppModel: ObservableObject {
     var selectedNode: DiskNode? { (result?.nodes.first { $0.path == selectedPath } ?? progress.rootNodes.first { $0.path == selectedPath }).map(protectedNode) }
     var rows: [DiskNode] {
         let scope = activeScope
-        let items = (result?.nodes ?? progress.rootNodes).filter { $0.parent == scope && $0.path != scope }
+        let items = (result?.nodes ?? progress.rootNodes).filter { $0.parent == scope && $0.path != scope }.map { UserProtection.apply($0, paths: protectedPaths) }
         let filtered = items.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) }
         return rankingSort.sort(filtered)
+    }
+    func handleNodeTap(_ node: DiskNode) {
+        let action = HierarchyBrowser.nextBrowseAction(for: node, selectedPath: selectedPath, in: result)
+        selectedPath = action.selectedPath
+        if let target = action.browseTo { browse(target) }
+    }
+    func handleSpaceMapTap(_ block: SpaceMapBlock) {
+        guard let path = block.path, let node = rows.first(where: { $0.path == path }) else { return }
+        handleNodeTap(node)
+    }
+    func copyPath(_ path: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(path, forType: .string)
     }
     var spaceMapBlocks: [SpaceMapBlock] {
         SpaceMapLayout.blocks(for: rows)
@@ -227,7 +240,7 @@ final class AppModel: ObservableObject {
             switch outcome {
             case .success(let value):
                 self.result = value; self.fresh = !value.cancelled
-                self.selectedPath = value.nodes.first { $0.parent == scope.path }?.path
+                self.selectedPath = self.rows.first?.path
                 if value.complete { self.saveSnapshot(value) }
             case .failure(let error): self.message = error.localizedDescription
             }

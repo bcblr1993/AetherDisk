@@ -37,7 +37,7 @@ struct LargeFilesPage: View {
                         Image(systemName: "doc.fill").font(.system(size: 19)).foregroundStyle(DiskTheme.accent).frame(width: 28)
                         VStack(alignment: .leading, spacing: 5) {
                             Text(node.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                            Text(DiskFormat.compactPath(node.path)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(2).textSelection(.enabled)
+                            Text(DiskFormat.compactPath(node.path)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(2).help(node.path)
                             if !node.protection.isEmpty { Text(node.protection.map(\.title).sorted().joined(separator: " · ")).font(.system(size: 10)).foregroundStyle(.teal) }
                         }
                         Spacer(minLength: 12)
@@ -46,7 +46,8 @@ struct LargeFilesPage: View {
                             Text(model.largeBasis == .allocated ? "逻辑 " + DiskFormat.bytes(node.logical) : "占用 " + DiskFormat.bytes(node.allocated)).font(.system(size: 10)).foregroundStyle(.secondary)
                             Button("在 Finder 中显示") { model.reveal(node.path) }.buttonStyle(DiskButtonStyle(kind: .quiet)).controlSize(.small).accessibilityLabel("定位 " + node.name)
                         }
-                    }.padding(.vertical, 10)
+                    }.padding(.vertical, 10).contentShape(Rectangle())
+                        .contextMenu { Button("在 Finder 中显示") { model.reveal(node.path) }; Button("复制路径") { model.copyPath(node.path) } }
                     Divider().opacity(0.6)
                 }
             } }
@@ -144,7 +145,7 @@ struct ProjectsPage: View {
                                         Tag(text: "久未活跃", color: .orange)
                                     }
                                 }
-                                Text(DiskFormat.compactPath(project.path)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                                Text(DiskFormat.compactPath(project.path)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).help(project.path)
                                 HStack(spacing: 12) {
                                     Text("\(project.fileCount.formatted()) 文件")
                                     Text("源码与资产 \(DiskFormat.bytes(project.nonCacheAllocated))")
@@ -167,7 +168,8 @@ struct ProjectsPage: View {
                                     Button("在 Finder 中显示") { model.reveal(project.path) }.buttonStyle(DiskButtonStyle(kind: .quiet)).font(.system(size: 10)).foregroundStyle(.secondary)
                                 }
                             }
-                        }.padding(.vertical, 10)
+                        }.padding(.vertical, 10).contentShape(Rectangle())
+                            .contextMenu { Button("概览中查看") { model.browseProject(project) }; Button("在 Finder 中显示") { model.reveal(project.path) }; Button("复制路径") { model.copyPath(project.path) } }
                         if project.id != model.projects.last?.id { Divider().opacity(0.6) }
                     }
                 }
