@@ -72,11 +72,55 @@ public enum ScanComparison {
 }
 
 public enum ScanHistoryStore {
-    public static let maxSnapshots = 5
+    public static let maxSnapshots = 10
     public static func append(_ result: ScanResult, into existing: [ScanResult], limit: Int = maxSnapshots) -> [ScanResult] {
         guard result.complete else { return existing }
         let combined = ([result] + existing.filter { $0.root == result.root && abs($0.scannedAt.timeIntervalSince(result.scannedAt)) > 0.001 })
             .sorted { $0.scannedAt > $1.scannedAt }
         return Array(combined.prefix(max(1, limit)))
+    }
+}
+
+public struct TrendPoint: Equatable, Sendable, Identifiable {
+    public var id: Date { scannedAt }
+    public var scannedAt: Date
+    public var allocated: Int64
+    public var files: Int
+}
+
+public struct GrowthHotspot: Equatable, Sendable, Identifiable {
+    public var id: String { path }
+    public var path: String
+    public var name: String { URL(fileURLWithPath: path).lastPathComponent }
+    public var currentAllocated: Int64
+    public var totalGrowth: Int64
+    public var consecutiveGrows: Int
+}
+
+public enum ScanTrendAnalyzer {
+    public static func timeline(from snapshots: [ScanResult]) -> [TrendPoint] {
+        snapshots.sorted { $0.scannedAt < $1.scannedAt }.map {
+            TrendPoint(scannedAt: $0.scannedAt, allocated: $0.allocated, files: $0.files)
+        }
+    }
+    public static func growthHotspots(from snapshots: [ScanResult]) -> [GrowthHotspot] {
+        let ordered = snapshots.sorted { $0.scannedAt < $1.scannedAt }
+        guard ordered.count >= 3, let latest = ordered.last else { return [] }
+        let root = latest.root
+        let candidatePaths = latest.nodes.filter { $0.parent == root && $0.path != root && $0.allocated > 0 }.map(\.path)
+        var hotspots: [GrowthHotspot] = []
+        for path in candidatePaths {
+            let series = ordered.map { snap in snap.nodes.first { $0.path == path }?.allocated ?? 0 }
+            var monotonic = true
+            var grows = 0
+            for idx in 1..<series.count {
+                if series[idx] > series[idx - 1] { grows += 1 }
+                else { monotonic = false; break }
+            }
+            if monotonic && grows >= 2, let first = series.first, let last = series.last, last > first {
+                hotspots.append(GrowthHotspot(path: path, currentAllocated: last, totalGrowth: last - first, consecutiveGrows: grows))
+            }
+        }
+        return hotspots.sorted { $0.totalGrowth == $1.totalGrowth ? $0.path < $1.path : $0.totalGrowth > $1.totalGrowth }
     }
 }

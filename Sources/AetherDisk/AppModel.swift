@@ -41,6 +41,8 @@ final class AppModel: ObservableObject {
     @Published var plan: CleanupPlan?
     @Published var checking = false
     @Published var volume = VolumeSpace.read(at: FileManager.default.homeDirectoryForCurrentUser)
+    @Published var auditEntries: [CleanupAuditEntry] = CleanupAuditStore().load()
+    private let auditStore = CleanupAuditStore()
     private var token = ScanCancellation()
     private var generation = UUID()
     private let cleanup = CleanupService()
@@ -165,6 +167,15 @@ final class AppModel: ObservableObject {
         let filtered = items.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) }
         return rankingSort.sort(filtered)
     }
+    var spaceMapBlocks: [SpaceMapBlock] {
+        SpaceMapLayout.blocks(for: rows)
+    }
+    var trendPoints: [TrendPoint] {
+        ScanTrendAnalyzer.timeline(from: history)
+    }
+    var growthHotspots: [GrowthHotspot] {
+        ScanTrendAnalyzer.growthHotspots(from: history)
+    }
     var baselineOptions: [ScanResult] {
         history.filter { item in
             guard let current = result else { return true }
@@ -244,6 +255,8 @@ final class AppModel: ObservableObject {
         Task {
             do {
                 let receipt = try await cleanup.execute(confirmedPlanID: plan.id, protectedPaths: protectedPaths)
+                auditStore.record(receipt: receipt, planAllocated: plan.allocated)
+                auditEntries = auditStore.load()
                 let text = "已移入废纸篓 \(receipt.moved.count) 项。可用空间变化 \(receipt.freeSpaceChange < 0 ? "−" : "+")\(DiskFormat.bytes(receipt.freeSpaceChange))。清空废纸篓后才会释放文件占用。"
                 message = receipt.failed.isEmpty ? text : text + "\n未完成：" + receipt.failed.joined(separator: "\n")
                 fresh = false; selectedCaches = []; volume = .read(at: root)

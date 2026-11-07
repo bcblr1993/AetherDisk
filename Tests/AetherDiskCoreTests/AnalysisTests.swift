@@ -157,7 +157,7 @@ final class AnalysisTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(LargeFileQuery.rows(large, minimum: 1024 * 1024, staleDays: 365).isEmpty)
 
         var history: [ScanResult] = []
-        for i in 0..<7 {
+        for i in 0..<12 {
             var item = scan
             item.scannedAt = Date(timeIntervalSince1970: Double(1_700_000_000 + i * 60))
             history = ScanHistoryStore.append(item, into: history)
@@ -165,7 +165,7 @@ final class AnalysisTests: XCTestCase, @unchecked Sendable {
         var partial = scan; partial.cancelled = true; partial.scannedAt = Date(timeIntervalSince1970: 1_800_000_000)
         history = ScanHistoryStore.append(partial, into: history)
         XCTAssertEqual(history.count, ScanHistoryStore.maxSnapshots)
-        XCTAssertEqual(history.first?.scannedAt, Date(timeIntervalSince1970: Double(1_700_000_000 + 6 * 60)))
+        XCTAssertEqual(history.first?.scannedAt, Date(timeIntervalSince1970: Double(1_700_000_000 + 11 * 60)))
     }
 
     func testComparisonDirectionFilterSearchAndSummary() throws {
@@ -350,6 +350,99 @@ final class AnalysisTests: XCTestCase, @unchecked Sendable {
         let csv = ScanReport.csv(scan, protectedPaths: ["/work/HeavySource"])
         XCTAssertTrue(csv.contains("\"project\",\"/work/HeavyCache\",\"HeavyCache\",\"directory\",1000,1000,10"))
         XCTAssertTrue(csv.contains("\"project\",\"/work/HeavySource\",\"HeavySource\",\"directory\",700,700,25,\"user\""))
+    }
+
+    func testSpaceMapLayoutNormalizationAndTailGrouping() {
+        XCTAssertTrue(SpaceMapLayout.blocks(for: []).isEmpty)
+        let nodes = [
+            DiskNode(path: "/root/BigA", allocated: 600),
+            DiskNode(path: "/root/BigB", allocated: 370),
+            DiskNode(path: "/root/Tiny1", allocated: 10),
+            DiskNode(path: "/root/Tiny2", allocated: 10),
+            DiskNode(path: "/root/Tiny3", allocated: 10)
+        ]
+        let blocks = SpaceMapLayout.blocks(for: nodes, minFraction: 0.02, maxBlocks: 8)
+        XCTAssertEqual(blocks.count, 3)
+        let totalFraction = blocks.reduce(0.0) { $0 + $1.fraction }
+        XCTAssertEqual(totalFraction, 1.0, accuracy: 0.0001)
+        let tail = blocks.last
+        XCTAssertEqual(tail?.isTailGroup, true)
+        XCTAssertEqual(tail?.groupedCount, 3)
+        XCTAssertEqual(tail?.allocated, 30)
+    }
+
+    func testMultiSnapshotTrendAndContinuousGrowthDetection() {
+        func makeSnap(ts: TimeInterval, total: Int64, logs: Int64, temp: Int64) -> ScanResult {
+            ScanResult(
+                root: "/work",
+                scannedAt: Date(timeIntervalSince1970: ts),
+                duration: 0.1,
+                allocated: total,
+                logical: total,
+                files: 10,
+                directories: 3,
+                unreadable: 0,
+                issues: [],
+                nodes: [
+                    DiskNode(path: "/work/Logs", kind: .directory, allocated: logs),
+                    DiskNode(path: "/work/Temp", kind: .directory, allocated: temp)
+                ],
+                recommendations: [],
+                cancelled: false
+            )
+        }
+        let s1 = makeSnap(ts: 1_700_000_000, total: 300, logs: 100, temp: 200)
+        let s2 = makeSnap(ts: 1_700_086_400, total: 800, logs: 300, temp: 500)
+        let s3 = makeSnap(ts: 1_700_172_800, total: 1000, logs: 600, temp: 400)
+        let points = ScanTrendAnalyzer.timeline(from: [s3, s1, s2])
+        XCTAssertEqual(points.map(\.allocated), [300, 800, 1000])
+        let hotspots = ScanTrendAnalyzer.growthHotspots(from: [s3, s2, s1])
+        XCTAssertEqual(hotspots.map(\.name), ["Logs"])
+        XCTAssertEqual(hotspots.first?.totalGrowth, 500)
+        XCTAssertEqual(hotspots.first?.consecutiveGrows, 2)
+    }
+
+    func testVolumeSpacePurgeableGapAndAPFSBoundaryNotes() {
+        let vol = VolumeSpace(total: 500 * 1024 * 1024 * 1024, free: 40 * 1024 * 1024 * 1024, opportunisticFree: 55 * 1024 * 1024 * 1024)
+        XCTAssertEqual(vol.purgeableGap, 15 * 1024 * 1024 * 1024)
+        XCTAssertNotNil(vol.purgeableNote)
+        let flat = VolumeSpace(total: 500 * 1024 * 1024 * 1024, free: 40 * 1024 * 1024 * 1024, opportunisticFree: 40 * 1024 * 1024 * 1024)
+        XCTAssertEqual(flat.purgeableGap, 0)
+        XCTAssertNil(flat.purgeableNote)
+    }
+
+    func testCleanupAuditLedgerPersistenceAndBoundedRetention() throws {
+        let auditURL = root.appendingPathComponent("audit/cleanup-audit.json")
+        let store = CleanupAuditStore(fileURL: auditURL, maxEntries: 3)
+        XCTAssertTrue(store.load().isEmpty)
+
+        let emptyReceipt = CleanupReceipt(moved: [], failed: ["/a：error"], freeSpaceChange: 0)
+        store.record(receipt: emptyReceipt, planAllocated: 1024)
+        XCTAssertTrue(store.load().isEmpty)
+
+        for i in 1...4 {
+            let receipt = CleanupReceipt(moved: ["/Users/demo/Library/Caches/App\(i)"], failed: [], freeSpaceChange: Int64(i * 4096))
+            store.record(receipt: receipt, planAllocated: Int64(i * 8192), timestamp: Date(timeIntervalSince1970: Double(1_750_000_000 + i)))
+        }
+        let entries = store.load()
+        XCTAssertEqual(entries.count, 3)
+        XCTAssertEqual(entries.first?.movedPaths, ["/Users/demo/Library/Caches/App4"])
+        XCTAssertEqual(entries.last?.movedPaths, ["/Users/demo/Library/Caches/App2"])
+    }
+
+    func testCLIScanOptionsParsingAndCompareFormatting() throws {
+        let opts = try ScanCLIOptions.parse(["/Users/demo/Downloads", "--json", "/tmp/out.json", "--csv", "/tmp/out.csv", "--compare", "/tmp/prev.json", "--top", "8"])
+        XCTAssertEqual(opts.rootPath, "/Users/demo/Downloads")
+        XCTAssertEqual(opts.jsonPath, "/tmp/out.json")
+        XCTAssertEqual(opts.csvPath, "/tmp/out.csv")
+        XCTAssertEqual(opts.comparePath, "/tmp/prev.json")
+        XCTAssertEqual(opts.topLimit, 8)
+
+        let prev = ScanResult(root: "/work", scannedAt: Date(timeIntervalSince1970: 1_700_000_000), duration: 0.1, allocated: 1024, logical: 1024, files: 1, directories: 1, unreadable: 0, issues: [], nodes: [DiskNode(path: "/work/A", allocated: 1024)], recommendations: [], cancelled: false)
+        let curr = ScanResult(root: "/work", scannedAt: Date(timeIntervalSince1970: 1_700_003_600), duration: 0.1, allocated: 4096, logical: 4096, files: 2, directories: 1, unreadable: 0, issues: [], nodes: [DiskNode(path: "/work/A", allocated: 4096)], recommendations: [], cancelled: false)
+        let diffText = ScanCLIOptions.formatComparison(current: curr, previous: prev)
+        XCTAssertTrue(diffText.contains("对比基线"))
+        XCTAssertTrue(diffText.contains("A"))
     }
 
 }

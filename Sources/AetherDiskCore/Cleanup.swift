@@ -175,3 +175,33 @@ public actor CleanupService {
         return .init(moved: moved, failed: failed, freeSpaceChange: VolumeSpace.read(at: home).free - before)
     }
 }
+public struct CleanupAuditEntry: Codable, Sendable, Equatable, Identifiable {
+    public var id: UUID
+    public var timestamp: Date
+    public var movedPaths: [String]
+    public var planAllocated: Int64
+    public var freeSpaceChange: Int64
+    public init(id: UUID = UUID(), timestamp: Date = Date(), movedPaths: [String], planAllocated: Int64, freeSpaceChange: Int64) {
+        self.id = id; self.timestamp = timestamp; self.movedPaths = movedPaths; self.planAllocated = planAllocated; self.freeSpaceChange = freeSpaceChange
+    }
+}
+public struct CleanupAuditStore: Sendable {
+    public let fileURL: URL
+    public let maxEntries: Int
+    public init(fileURL: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("AetherDisk/cleanup-audit.json"), maxEntries: Int = 50) {
+        self.fileURL = fileURL; self.maxEntries = max(1, maxEntries)
+    }
+    public func load() -> [CleanupAuditEntry] {
+        guard let data = try? Data(contentsOf: fileURL), let items = try? JSONDecoder().decode([CleanupAuditEntry].self, from: data) else { return [] }
+        return items
+    }
+    public func record(receipt: CleanupReceipt, planAllocated: Int64, timestamp: Date = Date()) {
+        guard !receipt.moved.isEmpty else { return }
+        let entry = CleanupAuditEntry(timestamp: timestamp, movedPaths: receipt.moved, planAllocated: planAllocated, freeSpaceChange: receipt.freeSpaceChange)
+        let updated = Array(([entry] + load()).prefix(maxEntries))
+        do {
+            try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try JSONEncoder().encode(updated).write(to: fileURL, options: .atomic)
+        } catch {}
+    }
+}

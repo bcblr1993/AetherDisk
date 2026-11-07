@@ -81,14 +81,25 @@ public struct ScanResult: Codable, Sendable {
     public var complete: Bool { !cancelled && unreadable == 0 }
 }
 public struct VolumeSpace: Sendable {
-    public var total: Int64; public var free: Int64
+    public var total: Int64; public var free: Int64; public var opportunisticFree: Int64
     public var used: Int64 { max(0, total - free) }
+    public var purgeableGap: Int64 { max(0, opportunisticFree - free) }
+    public var purgeableNote: String? {
+        guard purgeableGap >= 64 * 1024 * 1024 else { return nil }
+        return "系统弹性可回收约 \(DiskFormat.bytes(purgeableGap))（含 APFS 本地快照与系统暂存）"
+    }
+    public init(total: Int64, free: Int64, opportunisticFree: Int64? = nil) {
+        self.total = total; self.free = free; self.opportunisticFree = opportunisticFree ?? free
+    }
     public static func read(at url: URL) -> VolumeSpace {
         var info = statfs()
         if statfs(url.path, &info) == 0 {
-            return .init(total: Int64(info.f_blocks) * Int64(info.f_bsize), free: Int64(info.f_bavail) * Int64(info.f_bsize))
+            let total = Int64(info.f_blocks) * Int64(info.f_bsize)
+            let free = Int64(info.f_bavail) * Int64(info.f_bsize)
+            let opp = (try? url.resourceValues(forKeys: [.volumeAvailableCapacityForOpportunisticUsageKey]).volumeAvailableCapacityForOpportunisticUsage) ?? free
+            return .init(total: total, free: free, opportunisticFree: max(free, opp))
         }
-        return .init(total: 0, free: 0)
+        return .init(total: 0, free: 0, opportunisticFree: 0)
     }
 }
 public enum DiskFormat {

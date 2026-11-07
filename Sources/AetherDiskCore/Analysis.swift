@@ -282,3 +282,72 @@ public enum UserProtection {
         if paths.contains(where: { overlaps($0, protectedPaths: protectedPaths) }) { throw CleanupError.refused("该目录或其内部包含自定义保护目录，已阻止清理。") }
     }
 }
+public struct SpaceMapBlock: Sendable, Equatable, Identifiable {
+    public var id: String
+    public var title: String
+    public var path: String?
+    public var allocated: Int64
+    public var fraction: Double
+    public var isDirectory: Bool
+    public var isTailGroup: Bool
+    public var groupedCount: Int
+}
+public enum SpaceMapLayout {
+    public static func blocks(for nodes: [DiskNode], minFraction: Double = 0.02, maxBlocks: Int = 8) -> [SpaceMapBlock] {
+        let positive = nodes.filter { $0.allocated > 0 }.sorted { $0.allocated == $1.allocated ? $0.path < $1.path : $0.allocated > $1.allocated }
+        let total = positive.reduce(Int64(0)) { $0 + $1.allocated }
+        guard total > 0 else { return [] }
+        var primary: [DiskNode] = []
+        var tail: [DiskNode] = []
+        for (idx, node) in positive.enumerated() {
+            let frac = Double(node.allocated) / Double(total)
+            if idx < max(1, maxBlocks - 1) && (frac >= minFraction || primary.isEmpty) {
+                primary.append(node)
+            } else {
+                tail.append(node)
+            }
+        }
+        if tail.count == 1, let single = tail.first, primary.count < maxBlocks {
+            primary.append(single); tail.removeAll()
+        }
+        var result = primary.map { node in
+            SpaceMapBlock(id: node.path, title: node.name, path: node.path, allocated: node.allocated, fraction: Double(node.allocated) / Double(total), isDirectory: node.kind == .directory, isTailGroup: false, groupedCount: 1)
+        }
+        if !tail.isEmpty {
+            let tailAlloc = tail.reduce(Int64(0)) { $0 + $1.allocated }
+            result.append(SpaceMapBlock(id: "__tail__", title: "其余 \(tail.count) 项", path: nil, allocated: tailAlloc, fraction: Double(tailAlloc) / Double(total), isDirectory: false, isTailGroup: true, groupedCount: tail.count))
+        }
+        return result
+    }
+}
+public struct ScanCLIOptions: Sendable, Equatable {
+    public var rootPath: String
+    public var jsonPath: String?
+    public var csvPath: String?
+    public var comparePath: String?
+    public var topLimit: Int
+    public static func parse(_ args: [String]) throws -> ScanCLIOptions {
+        guard let first = args.first, !first.hasPrefix("-") else { throw ScanFailure.invalidRoot }
+        var opts = ScanCLIOptions(rootPath: first, jsonPath: nil, csvPath: nil, comparePath: nil, topLimit: 15)
+        var i = 1
+        while i < args.count {
+            let flag = args[i]
+            if flag == "--json", i + 1 < args.count { opts.jsonPath = args[i + 1]; i += 2 }
+            else if flag == "--csv", i + 1 < args.count { opts.csvPath = args[i + 1]; i += 2 }
+            else if flag == "--compare", i + 1 < args.count { opts.comparePath = args[i + 1]; i += 2 }
+            else if flag == "--top", i + 1 < args.count, let n = Int(args[i + 1]), n > 0 { opts.topLimit = min(200, n); i += 2 }
+            else { i += 1 }
+        }
+        return opts
+    }
+    public static func formatComparison(current: ScanResult, previous: ScanResult) -> String {
+        let sum = ScanComparison.summary(current: current, previous: previous)
+        let sign = sum.allocatedDelta >= 0 ? "+" : "−"
+        var lines = ["对比基线：\(ISO8601DateFormatter().string(from: previous.scannedAt))，总变化：\(sign)\(DiskFormat.bytes(sum.allocatedDelta))（增长 \(sum.grownCount) 项，减少 \(sum.shrunkCount) 项）"]
+        for (node, delta) in ScanComparison.changes(current: current, previous: previous, depth: .top).prefix(10) where delta != 0 {
+            let dSign = delta >= 0 ? "+" : "−"
+            lines.append("\(dSign)\(DiskFormat.bytes(delta))\t\(node.name)")
+        }
+        return lines.joined(separator: "\n")
+    }
+}

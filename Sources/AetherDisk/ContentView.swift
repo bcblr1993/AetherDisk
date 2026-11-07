@@ -127,6 +127,35 @@ struct ContentView: View {
                                     Button("回到扫描根目录") { model.browse(nil) }.buttonStyle(DiskButtonStyle(kind: .quiet)).font(.system(size: 10))
                                 }.padding(.horizontal, 8).padding(.vertical, 4).background(DiskTheme.inset, in: RoundedRectangle(cornerRadius: DiskTheme.controlRadius))
                             }
+                            if !model.spaceMapBlocks.isEmpty {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    GeometryReader { geo in
+                                        HStack(spacing: 2) {
+                                            ForEach(Array(model.spaceMapBlocks.enumerated()), id: \.element.id) { idx, block in
+                                                RoundedRectangle(cornerRadius: 4)
+                                                    .fill(block.isTailGroup ? Color.secondary.opacity(0.32) : DiskTheme.colors[idx % DiskTheme.colors.count].opacity(0.85))
+                                                    .frame(width: max(6, geo.size.width * CGFloat(block.fraction)))
+                                                    .help("\(block.title) · \(DiskFormat.bytes(block.allocated)) (\(String(format: "%.1f%%", block.fraction * 100)))")
+                                                    .onTapGesture { if let p = block.path { model.selectedPath = p } }
+                                            }
+                                        }
+                                    }.frame(height: 12)
+                                    ScrollView(.horizontal, showsIndicators: false) {
+                                        HStack(spacing: 6) {
+                                            ForEach(Array(model.spaceMapBlocks.enumerated()), id: \.element.id) { idx, block in
+                                                Button {
+                                                    if let p = block.path { model.selectedPath = p }
+                                                } label: {
+                                                    HStack(spacing: 4) {
+                                                        Circle().fill(block.isTailGroup ? Color.secondary : DiskTheme.colors[idx % DiskTheme.colors.count]).frame(width: 6, height: 6)
+                                                        Text("\(block.title) \(String(format: "%.0f%%", block.fraction * 100))").font(.system(size: 10))
+                                                    }.padding(.horizontal, 6).padding(.vertical, 2).background(DiskTheme.inset, in: Capsule())
+                                                }.buttonStyle(DiskButtonStyle(kind: .quiet))
+                                            }
+                                        }
+                                    }
+                                }.padding(.vertical, 2).accessibilityIdentifier("space-map")
+                            }
                             HStack { Text("文件夹 / 文件"); Spacer(); Text("占用 / 比例") }.font(.system(size: 10)).foregroundStyle(.tertiary)
                             if model.rows.isEmpty { Text(model.scanning ? "正在收集目录…" : "此目录没有可列出的文件，或访问受到限制。").font(.system(size: 12)).foregroundStyle(.secondary).padding(.vertical, 28) }
                             VStack(spacing: 2) {
@@ -155,6 +184,9 @@ struct ContentView: View {
                     HStack { VStack(alignment: .leading, spacing: 5) { Text("所选位置所在磁盘").font(.system(size: 11)).foregroundStyle(.secondary); Text("还有 \(DiskFormat.bytes(model.volume.free)) 可用").font(.system(size: 22, weight: .semibold, design: .rounded)).monospacedDigit() }; Spacer(); Tag(text: "本机实时容量", color: .teal) }
                     GeometryReader { g in ZStack(alignment: .leading) { Capsule().fill(DiskTheme.accent.opacity(0.09)); Capsule().fill(LinearGradient(colors: [DiskTheme.accent, DiskTheme.purple], startPoint: .leading, endPoint: .trailing)).frame(width: model.volume.total > 0 ? g.size.width * CGFloat(model.volume.used) / CGFloat(model.volume.total) : 0) } }.frame(height: 6)
                     HStack { Text("已用 \(DiskFormat.bytes(model.volume.used))"); Spacer(); Text("总容量 \(DiskFormat.bytes(model.volume.total))") }.font(.system(size: 10)).foregroundStyle(.secondary).monospacedDigit()
+                    if let purgeable = model.volume.purgeableNote {
+                        Text(purgeable).font(.system(size: 10)).foregroundStyle(.teal)
+                    }
                 }
             }
         }
@@ -291,6 +323,23 @@ struct ContentView: View {
                 Button { model.preview() } label: { Label("检查并预览", systemImage: "checkmark.shield") }.buttonStyle(DiskButtonStyle(kind: .primary)).disabled(model.selectedCaches.isEmpty || !model.fresh || model.checking || model.scanning).accessibilityIdentifier("preview-cleanup")
             }
             Text("检查会重新确认文件占用与目录内容。新发现的源码、Git 跟踪文件、安装包或符号链接会阻止清理。移入废纸篓不代表已释放空间。").font(.system(size: 10)).foregroundStyle(.secondary).lineSpacing(4)
+            if !model.auditEntries.isEmpty {
+                Surface {
+                    VStack(alignment: .leading, spacing: 10) {
+                        PanelTitle(title: "最近移入废纸篓记录", caption: "本机审计账本 · 共 \(model.auditEntries.count) 次操作")
+                        ForEach(model.auditEntries.prefix(5)) { entry in
+                            HStack {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(entry.movedPaths.map { URL(fileURLWithPath: $0).lastPathComponent }.joined(separator: "、")).font(.system(size: 11, weight: .medium)).lineLimit(1)
+                                    Text("\(entry.timestamp.formatted(date: .abbreviated, time: .shortened)) · \(entry.movedPaths.count) 项").font(.system(size: 10)).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Text(DiskFormat.bytes(entry.planAllocated)).font(.system(size: 11, weight: .medium, design: .rounded)).monospacedDigit()
+                            }.padding(.vertical, 4)
+                        }
+                    }
+                }
+            }
         }
     }
     private var changesPage: some View {
@@ -334,6 +383,16 @@ struct ContentView: View {
                             Text("增长 \(summary.grownCount) 项 · 减少 \(summary.shrunkCount) 项")
                             Text("文件数 \((summary.filesDelta >= 0 ? "+" : "") + summary.filesDelta.formatted())")
                         }.font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                    if !model.growthHotspots.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 6) {
+                                Text("持续增长热点：").font(.system(size: 10, weight: .medium)).foregroundStyle(.orange)
+                                ForEach(model.growthHotspots.prefix(5)) { spot in
+                                    Tag(text: "\(spot.name) +\(DiskFormat.bytes(spot.totalGrowth))（连涨 \(spot.consecutiveGrows) 次）", color: .orange)
+                                }
+                            }
+                        }.accessibilityIdentifier("growth-hotspots")
                     }
                     if model.changes.isEmpty {
                         Text("没有符合当前筛选条件的变化目录。").font(.system(size: 12)).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.vertical, 28)
