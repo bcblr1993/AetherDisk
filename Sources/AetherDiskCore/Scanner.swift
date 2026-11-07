@@ -113,7 +113,7 @@ private final class ScanWorker {
                 defer { if openedRoot == nil { close(dir.descriptor) } }
                 guard dir.matches(st) else { throw CleanupError.changed }
                 var entries = try dir.bulkEntries()
-                let markers = depth <= 4 ? RuleCatalog.projectMarkers(in: entries.map(\.name)) : []
+                let markers = depth <= 4 ? RuleCatalog.projectMarkers(in: entries) : []
                 if depth == 0 {
                     let priority = ["Downloads": 0, "Desktop": 1, "Documents": 2, "IdeaProjects": 3, "Library": 90]
                     entries.sort { (priority[$0.name] ?? 40, $0.name) < (priority[$1.name] ?? 40, $1.name) }

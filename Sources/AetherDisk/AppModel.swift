@@ -73,23 +73,27 @@ final class AppModel: ObservableObject {
         return ProjectWorkspaceQuery.rows(raw, sort: projectSort, query: projectQuery)
     }
     func selectProjectCaches(_ project: ProjectSummary) {
-        for path in project.cachePaths where recommendations.first(where: { $0.id == path })?.blocked == false {
-            selectedCaches.insert(path)
+        suggestionFilter = .all
+        suggestionCategory = nil
+        suggestionQuery = ""
+        suggestionStaleOnly = false
+        if fresh && !scanning && !checking {
+            let candidateSet = selectedCaches.union(project.cachePaths)
+            selectedCaches = RecommendationQuery.sanitizedSelection(candidateSet, in: recommendations, fresh: fresh)
         }
         page = "suggestions"
     }
-    func browseProject(_ project: ProjectSummary) {
-        if let result, HierarchyBrowser.canBrowse(.init(path: project.path, kind: .directory), in: result) {
+    func navigateToOverview(path: String) {
+        if let nav = HierarchyBrowser.resolveNavigationTarget(for: path, in: result) {
             page = "overview"
-            browse(project.path)
-        } else if let result, result.nodes.contains(where: { $0.path == project.path }) {
-            page = "overview"
-            let parent = URL(fileURLWithPath: project.path).deletingLastPathComponent().path
-            browse(parent == result.root ? nil : parent)
-            selectedPath = project.path
+            browse(nav.browseScope)
+            if let sel = nav.selectedPath { selectedPath = sel }
         } else {
-            reveal(project.path)
+            reveal(path)
         }
+    }
+    func browseProject(_ project: ProjectSummary) {
+        navigateToOverview(path: project.path)
     }
     var activeScope: String { browsePath ?? (result?.root ?? root.path) }
     var isBrowsingSubfolder: Bool {

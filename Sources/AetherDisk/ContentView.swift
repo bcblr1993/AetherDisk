@@ -118,13 +118,13 @@ struct ContentView: View {
                                 Picker("排序", selection: $model.rankingSort) {
                                     ForEach(RankingSort.allCases) { item in Text(item.title).tag(item) }
                                 }.pickerStyle(.segmented).labelsHidden().frame(width: 168).accessibilityIdentifier("ranking-sort")
-                                if model.root != FileManager.default.homeDirectoryForCurrentUser {
+                                if !model.isBrowsingSubfolder && model.root.path != "/" && model.root != FileManager.default.homeDirectoryForCurrentUser {
                                     Button { model.start(model.root.deletingLastPathComponent()) } label: { Image(systemName: "arrow.up") }.help("扫描上一级")
                                 }
                             }
                             if model.isBrowsingSubfolder {
                                 HStack(spacing: 6) {
-                                    Button { model.browse(URL(fileURLWithPath: model.activeScope).deletingLastPathComponent().path) } label: { Image(systemName: "chevron.left") }.buttonStyle(DiskButtonStyle(kind: .quiet)).help("返回上一层浏览").accessibilityLabel("返回上一层浏览")
+                                    Button { model.browse(HierarchyBrowser.parentScope(root: model.result?.root ?? model.root.path, current: model.activeScope)) } label: { Image(systemName: "chevron.left") }.buttonStyle(DiskButtonStyle(kind: .quiet)).help("返回上一层浏览").accessibilityLabel("返回上一层浏览")
                                     ScrollView(.horizontal, showsIndicators: false) {
                                         HStack(spacing: 4) {
                                             ForEach(Array(model.breadcrumbs.enumerated()), id: \.element.path) { idx, crumb in
@@ -224,14 +224,15 @@ struct ContentView: View {
         let fraction = min(1, Double(node.allocated) / Double(max(1, model.result?.allocated ?? model.progress.allocated)))
         let primaryText = model.rankingSort == .logical ? DiskFormat.bytes(node.logical) : DiskFormat.bytes(node.allocated)
         let secondaryText = model.rankingSort == .files ? "\(node.fileCount.formatted()) 文件" : String(format: "%.1f%%", fraction * 100)
-        return HStack(spacing: 10) {
-            Image(systemName: node.kind == .directory ? "folder.fill" : "doc.fill").font(.system(size: 15)).foregroundStyle(DiskTheme.colors[index % DiskTheme.colors.count]).frame(width: 28, height: 28).background(DiskTheme.colors[index % DiskTheme.colors.count].opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-            VStack(alignment: .leading, spacing: 5) { HStack(spacing: 5) { Text(node.name).font(.system(size: 12, weight: .medium)).lineLimit(1); if node.restricted { Image(systemName: "lock").font(.system(size: 9)).foregroundStyle(.orange) } }; GeometryReader { g in Capsule().fill(DiskTheme.colors[index % DiskTheme.colors.count].opacity(0.65)).frame(width: max(2, g.size.width * fraction)) }.frame(height: 3) }.frame(maxWidth: .infinity, alignment: .leading)
-            VStack(alignment: .trailing, spacing: 4) { Text(primaryText).font(.system(size: 12, weight: .medium, design: .rounded)).monospacedDigit(); Text(secondaryText).font(.system(size: 9)).foregroundStyle(.tertiary) }.frame(width: 75, alignment: .trailing)
-            if model.canBrowse(node) { Button { model.browse(node.path) } label: { Image(systemName: "arrow.turn.down.right").font(.system(size: 10)).foregroundStyle(.secondary) }.buttonStyle(DiskButtonStyle(kind: .quiet)).help("展开 \(node.name)").accessibilityLabel("展开 \(node.name)") }
-            if node.kind == .directory { Button { model.start(URL(fileURLWithPath: node.path)) } label: { Image(systemName: "chevron.right").font(.system(size: 10)).foregroundStyle(.tertiary) }.buttonStyle(DiskButtonStyle(kind: .quiet)).help("扫描 \(node.name)").accessibilityLabel("扫描 \(node.name)") } else { Color.clear.frame(width: 6) }
-        }.padding(.horizontal, 8).padding(.vertical, 5).background(model.selectedPath == node.path ? DiskTheme.accent.opacity(0.07) : .clear, in: RoundedRectangle(cornerRadius: 9))
-            .contentShape(Rectangle()).onTapGesture { model.handleNodeTap(node) }
+        return DiskInteractiveRow(selected: model.selectedPath == node.path, horizontalPadding: 8, verticalPadding: 5) {
+            HStack(spacing: 10) {
+                Image(systemName: node.kind == .directory ? "folder.fill" : "doc.fill").font(.system(size: 15)).foregroundStyle(DiskTheme.colors[index % DiskTheme.colors.count]).frame(width: 28, height: 28).background(DiskTheme.colors[index % DiskTheme.colors.count].opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                VStack(alignment: .leading, spacing: 5) { HStack(spacing: 5) { Text(node.name).font(.system(size: 12, weight: .medium)).lineLimit(1); if node.restricted { Image(systemName: "lock").font(.system(size: 9)).foregroundStyle(.orange) } }; GeometryReader { g in Capsule().fill(DiskTheme.colors[index % DiskTheme.colors.count].opacity(0.65)).frame(width: max(2, g.size.width * fraction)) }.frame(height: 3) }.frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .trailing, spacing: 4) { Text(primaryText).font(.system(size: 12, weight: .medium, design: .rounded)).monospacedDigit(); Text(secondaryText).font(.system(size: 9)).foregroundStyle(.tertiary) }.frame(width: 75, alignment: .trailing)
+                if model.canBrowse(node) { Button { model.browse(node.path) } label: { Image(systemName: "arrow.turn.down.right").font(.system(size: 10)).foregroundStyle(.secondary) }.buttonStyle(DiskButtonStyle(kind: .quiet)).help("展开 \(node.name)").accessibilityLabel("展开 \(node.name)") }
+                if node.kind == .directory { Button { model.start(URL(fileURLWithPath: node.path)) } label: { Image(systemName: "chevron.right").font(.system(size: 10)).foregroundStyle(.tertiary) }.buttonStyle(DiskButtonStyle(kind: .quiet)).help("扫描 \(node.name)").accessibilityLabel("扫描 \(node.name)") } else { Color.clear.frame(width: 6) }
+            }
+        }.onTapGesture { model.handleNodeTap(node) }
             .contextMenu { Button("在 Finder 中显示") { model.reveal(node.path) }; Button("复制路径") { model.copyPath(node.path) }; if model.canBrowse(node) { Button("展开此层级") { model.browse(node.path) } }; if node.kind == .directory { Button("保护此目录") { model.addProtection(node.path) }.disabled(model.checking); Button("扫描此文件夹") { model.start(URL(fileURLWithPath: node.path)) } } }
     }
     private var inspector: some View {
@@ -314,21 +315,23 @@ struct ContentView: View {
                     if model.recommendations.isEmpty { Text(model.result == nil ? "先扫描一个文件夹，建议会在这里出现。" : "此次扫描未发现符合规则的缓存目录。").font(.system(size: 12)).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.vertical, 48) }
                     else if model.filteredRecommendations.isEmpty { Text("没有符合当前筛选条件的缓存目录。").font(.system(size: 12)).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.vertical, 32) }
                     ForEach(model.filteredRecommendations) { r in
-                        HStack(alignment: .top, spacing: 12) {
-                            Toggle("选择 \(r.node.name)", isOn: Binding(get: { model.selectedCaches.contains(r.id) }, set: { if $0 { model.selectedCaches.insert(r.id) } else { model.selectedCaches.remove(r.id) } })).labelsHidden().toggleStyle(.checkbox).disabled(r.blocked || !model.fresh || model.scanning || model.checking).padding(.top, 4)
-                            Image(systemName: r.blocked ? "lock.shield.fill" : "shippingbox").font(.system(size: 18)).foregroundStyle(r.blocked ? Color.teal : DiskTheme.purple).frame(width: 30).padding(.top, 3)
-                            VStack(alignment: .leading, spacing: 6) {
-                                HStack {
-                                    Text(r.node.name).font(.system(size: 13, weight: .semibold))
-                                    Tag(text: r.blocked ? "已保护" : "需要确认", color: r.blocked ? .teal : DiskTheme.accent)
-                                    if r.isStale(days: 90) { Tag(text: "90 天未改", color: .orange) }
+                        DiskInteractiveRow(selected: model.selectedCaches.contains(r.id), horizontalPadding: 8, verticalPadding: 12) {
+                            HStack(alignment: .top, spacing: 12) {
+                                Toggle("选择 \(r.node.name)", isOn: Binding(get: { model.selectedCaches.contains(r.id) }, set: { if $0 { model.selectedCaches.insert(r.id) } else { model.selectedCaches.remove(r.id) } })).labelsHidden().toggleStyle(.checkbox).disabled(r.blocked || !model.fresh || model.scanning || model.checking).padding(.top, 4)
+                                Image(systemName: r.blocked ? "lock.shield.fill" : "shippingbox").font(.system(size: 18)).foregroundStyle(r.blocked ? Color.teal : DiskTheme.purple).frame(width: 30).padding(.top, 3)
+                                VStack(alignment: .leading, spacing: 6) {
+                                    HStack {
+                                        Text(r.node.name).font(.system(size: 13, weight: .semibold))
+                                        Tag(text: r.blocked ? "已保护" : "需要确认", color: r.blocked ? .teal : DiskTheme.accent)
+                                        if r.isStale(days: 90) { Tag(text: "90 天未改", color: .orange) }
+                                    }
+                                    Text(DiskFormat.compactPath(r.id)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).help(r.id)
+                                    Text(r.blocked ? r.node.protection.map(\.title).sorted().joined(separator: " · ") : r.reason).font(.system(size: 11)).foregroundStyle(.secondary)
                                 }
-                                Text(DiskFormat.compactPath(r.id)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).help(r.id)
-                                Text(r.blocked ? r.node.protection.map(\.title).sorted().joined(separator: " · ") : r.reason).font(.system(size: 11)).foregroundStyle(.secondary)
+                                Spacer()
+                                VStack(alignment: .trailing, spacing: 9) { Text(DiskFormat.bytes(r.node.allocated)).font(.system(size: 14, weight: .semibold, design: .rounded)); Button("查看位置") { model.reveal(r.id) }.buttonStyle(DiskButtonStyle(kind: .quiet)).font(.system(size: 10)).foregroundStyle(DiskTheme.accent) }
                             }
-                            Spacer()
-                            VStack(alignment: .trailing, spacing: 9) { Text(DiskFormat.bytes(r.node.allocated)).font(.system(size: 14, weight: .semibold, design: .rounded)); Button("查看位置") { model.reveal(r.id) }.buttonStyle(DiskButtonStyle(kind: .quiet)).font(.system(size: 10)).foregroundStyle(DiskTheme.accent) }
-                        }.padding(.vertical, 16).contentShape(Rectangle()).onTapGesture {
+                        }.onTapGesture {
                             guard !r.blocked && model.fresh && !model.scanning && !model.checking else { return }
                             if model.selectedCaches.contains(r.id) { model.selectedCaches.remove(r.id) } else { model.selectedCaches.insert(r.id) }
                         }.contextMenu { Button("在 Finder 中显示") { model.reveal(r.id) }; Button("复制路径") { model.copyPath(r.id) } }
@@ -409,7 +412,11 @@ struct ContentView: View {
                             HStack(spacing: 6) {
                                 Text("持续增长热点：").font(.system(size: 10, weight: .medium)).foregroundStyle(.orange)
                                 ForEach(model.growthHotspots.prefix(5)) { spot in
-                                    Tag(text: "\(spot.name) +\(DiskFormat.bytes(spot.totalGrowth))（连涨 \(spot.consecutiveGrows) 次）", color: .orange)
+                                    Button {
+                                        model.navigateToOverview(path: spot.path)
+                                    } label: {
+                                        Tag(text: "\(spot.name) +\(DiskFormat.bytes(spot.totalGrowth))（连涨 \(spot.consecutiveGrows) 次）", color: .orange)
+                                    }.buttonStyle(DiskButtonStyle(kind: .quiet)).help("点击在概览中查看 \(spot.path)")
                                 }
                             }
                         }.accessibilityIdentifier("growth-hotspots")
@@ -418,17 +425,20 @@ struct ContentView: View {
                         Text("没有符合当前筛选条件的变化目录。").font(.system(size: 12)).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.vertical, 28)
                     }
                     ForEach(model.changes, id: \.0.id) { node, delta in
-                        HStack {
-                            Image(systemName: node.kind == .directory ? "folder" : "doc").foregroundStyle(DiskTheme.accent)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(node.name).font(.system(size: 12))
-                                if model.comparisonDepth == .deep { Text(DiskFormat.compactPath(node.path)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).help(node.path) }
+                        DiskInteractiveRow(horizontalPadding: 8, verticalPadding: 8) {
+                            HStack {
+                                Image(systemName: node.kind == .directory ? "folder" : "doc").foregroundStyle(DiskTheme.accent)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(node.name).font(.system(size: 12))
+                                    if model.comparisonDepth == .deep { Text(DiskFormat.compactPath(node.path)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).help(node.path) }
+                                }
+                                Spacer()
+                                Text((delta > 0 ? "+" : delta < 0 ? "−" : "") + DiskFormat.bytes(delta)).font(.system(size: 13, weight: .medium, design: .rounded)).monospacedDigit().foregroundStyle(delta > 0 ? Color.orange : delta < 0 ? .teal : .secondary)
+                                Button("概览中查看") { model.navigateToOverview(path: node.path) }.buttonStyle(DiskButtonStyle(kind: .quiet)).font(.system(size: 10)).foregroundStyle(DiskTheme.accent)
+                                Button("在 Finder 中显示") { model.reveal(node.path) }.buttonStyle(DiskButtonStyle(kind: .quiet)).font(.system(size: 10)).foregroundStyle(.secondary)
                             }
-                            Spacer()
-                            Text((delta > 0 ? "+" : delta < 0 ? "−" : "") + DiskFormat.bytes(delta)).font(.system(size: 13, weight: .medium, design: .rounded)).monospacedDigit().foregroundStyle(delta > 0 ? Color.orange : delta < 0 ? .teal : .secondary)
-                            Button("在 Finder 中显示") { model.reveal(node.path) }.buttonStyle(DiskButtonStyle(kind: .quiet)).font(.system(size: 10)).foregroundStyle(.secondary)
-                        }.padding(.vertical, 10).contentShape(Rectangle())
-                            .contextMenu { Button("在 Finder 中显示") { model.reveal(node.path) }; Button("复制路径") { model.copyPath(node.path) } }
+                        }.onTapGesture { model.navigateToOverview(path: node.path) }
+                            .contextMenu { Button("概览中查看") { model.navigateToOverview(path: node.path) }; Button("在 Finder 中显示") { model.reveal(node.path) }; Button("复制路径") { model.copyPath(node.path) } }
                         Divider()
                     }
                 }

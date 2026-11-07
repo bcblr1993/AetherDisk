@@ -85,4 +85,13 @@ public enum RuleCatalog {
         let known: Set<String> = [".git", "Package.swift", "Cargo.toml", "pom.xml", "build.gradle", "build.gradle.kts", "CMakeLists.txt", "package.json", "pyproject.toml", "setup.py", "pubspec.yaml", "project.yml", "go.mod", "composer.json", "Gemfile", "mix.exs", "angular.json"]
         return children.filter { known.contains($0) }.sorted()
     }
+    public static func projectMarkers(in entries: [BulkEntry]) -> [String] {
+        let fileManifests: Set<String> = ["Package.swift", "Cargo.toml", "pom.xml", "build.gradle", "build.gradle.kts", "CMakeLists.txt", "package.json", "pyproject.toml", "setup.py", "pubspec.yaml", "project.yml", "go.mod", "composer.json", "Gemfile", "mix.exs", "angular.json"]
+        return entries.compactMap { entry -> String? in
+            guard !entry.isSymlink else { return nil }
+            if entry.name == ".git" && (entry.isDirectory || entry.isRegularFile) { return ".git" }
+            if entry.isRegularFile && fileManifests.contains(entry.name) { return entry.name }
+            return nil
+        }.sorted()
+    }
 }

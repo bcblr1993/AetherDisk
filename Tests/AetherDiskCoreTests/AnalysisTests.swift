@@ -518,4 +518,46 @@ final class AnalysisTests: XCTestCase, @unchecked Sendable {
         XCTAssertThrowsError(try ScanCLIOptions.parse(["/tmp", "--unknown-flag"]))
     }
 
+    func testProjectMarkersFromBulkEntriesRejectSymlinksAndNonRegularManifests() {
+        let entries = [
+            BulkEntry(name: ".git", dev: 1, ino: 1, mode: mode_t(S_IFDIR) | 0o755, nlink: 2, allocated: 4096, logical: 64, modifiedAt: 100),
+            BulkEntry(name: "Package.swift", dev: 1, ino: 2, mode: mode_t(S_IFDIR) | 0o755, nlink: 2, allocated: 4096, logical: 64, modifiedAt: 100), // directory, not regular file!
+            BulkEntry(name: "Cargo.toml", dev: 1, ino: 3, mode: mode_t(S_IFLNK) | 0o777, nlink: 1, allocated: 0, logical: 10, modifiedAt: 100), // symlink!
+            BulkEntry(name: "package.json", dev: 1, ino: 4, mode: mode_t(S_IFREG) | 0o644, nlink: 1, allocated: 4096, logical: 120, modifiedAt: 100) // valid regular file
+        ]
+        let markers = RuleCatalog.projectMarkers(in: entries)
+        XCTAssertEqual(markers, [".git", "package.json"])
+    }
+
+    func testHierarchyBrowserParentScopeAndNavigationResolution() {
+        XCTAssertNil(HierarchyBrowser.parentScope(root: "/work", current: "/work"))
+        XCTAssertNil(HierarchyBrowser.parentScope(root: "/work", current: "/work/Projects"))
+        XCTAssertEqual(HierarchyBrowser.parentScope(root: "/work", current: "/work/Projects/App"), "/work/Projects")
+        XCTAssertNil(HierarchyBrowser.parentScope(root: "/", current: "/"))
+
+        let parentDir = DiskNode(path: "/work/Projects", kind: .directory, allocated: 4096)
+        let leafDir = DiskNode(path: "/work/Projects/Leaf", kind: .directory, allocated: 2048)
+        let scan = ScanResult(root: "/work", scannedAt: Date(), duration: 0.1, allocated: 4096, logical: 4096, files: 1, directories: 2, unreadable: 0, issues: [], nodes: [parentDir, leafDir], recommendations: [], cancelled: false)
+
+        let browsableNav = HierarchyBrowser.resolveNavigationTarget(for: "/work/Projects", in: scan)
+        XCTAssertEqual(browsableNav?.browseScope, "/work/Projects")
+        XCTAssertEqual(browsableNav?.selectedPath, "/work/Projects/Leaf")
+
+        let leafNav = HierarchyBrowser.resolveNavigationTarget(for: "/work/Projects/Leaf", in: scan)
+        XCTAssertEqual(leafNav?.browseScope, "/work/Projects")
+        XCTAssertEqual(leafNav?.selectedPath, "/work/Projects/Leaf")
+
+        XCTAssertNil(HierarchyBrowser.resolveNavigationTarget(for: "/outside/Other", in: scan))
+    }
+
+    func testRecommendationSanitizedSelectionRemovesBlockedAndUnknownPaths() {
+        let recs = [
+            Recommendation(node: DiskNode(path: "/h/Library/Caches/Allowed", allocated: 100), category: .browser),
+            Recommendation(node: DiskNode(path: "/h/Library/Caches/Blocked", allocated: 200, protection: [.user]), category: .browser)
+        ]
+        let raw: Set<String> = ["/h/Library/Caches/Allowed", "/h/Library/Caches/Blocked", "/h/Library/Caches/Ghost"]
+        XCTAssertEqual(RecommendationQuery.sanitizedSelection(raw, in: recs, fresh: true), ["/h/Library/Caches/Allowed"])
+        XCTAssertTrue(RecommendationQuery.sanitizedSelection(raw, in: recs, fresh: false).isEmpty)
+    }
+
 }

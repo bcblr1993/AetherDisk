@@ -121,6 +121,32 @@ private struct DiskSidebarButtonChrome: View {
             .animation(.easeOut(duration: 0.12), value: hovering)
     }
 }
+struct DiskInteractiveRow<Content: View>: View {
+    var selected = false
+    var horizontalPadding: CGFloat = 8
+    var verticalPadding: CGFloat = 6
+    let content: Content
+    @State private var hovering = false
+    init(selected: Bool = false, horizontalPadding: CGFloat = 8, verticalPadding: CGFloat = 6, @ViewBuilder content: () -> Content) {
+        self.selected = selected
+        self.horizontalPadding = horizontalPadding
+        self.verticalPadding = verticalPadding
+        self.content = content()
+    }
+    var body: some View {
+        content
+            .padding(.horizontal, horizontalPadding)
+            .padding(.vertical, verticalPadding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                DiskTheme.accent.opacity(selected ? 0.085 : hovering ? 0.048 : 0),
+                in: RoundedRectangle(cornerRadius: 9)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 9))
+            .onHover { hovering = $0 }
+            .animation(.easeOut(duration: 0.12), value: hovering)
+    }
+}
 struct DiskDialog<Content: View, Actions: View>: View {
     let title: String
     let subtitle: String

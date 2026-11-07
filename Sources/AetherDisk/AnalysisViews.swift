@@ -33,21 +33,22 @@ struct LargeFilesPage: View {
                     Text("没有符合当前大小、类型和搜索条件的文件。").font(.system(size: 12)).foregroundStyle(.secondary).padding(.vertical, 28)
                 }
                 ForEach(model.largeFiles) { node in
-                    HStack(alignment: .top, spacing: 12) {
-                        Image(systemName: "doc.fill").font(.system(size: 19)).foregroundStyle(DiskTheme.accent).frame(width: 28)
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(node.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                            Text(DiskFormat.compactPath(node.path)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(2).help(node.path)
-                            if !node.protection.isEmpty { Text(node.protection.map(\.title).sorted().joined(separator: " · ")).font(.system(size: 10)).foregroundStyle(.teal) }
+                    DiskInteractiveRow(horizontalPadding: 8, verticalPadding: 10) {
+                        HStack(alignment: .top, spacing: 12) {
+                            Image(systemName: "doc.fill").font(.system(size: 19)).foregroundStyle(DiskTheme.accent).frame(width: 28)
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(node.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                                Text(DiskFormat.compactPath(node.path)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(2).help(node.path)
+                                if !node.protection.isEmpty { Text(node.protection.map(\.title).sorted().joined(separator: " · ")).font(.system(size: 10)).foregroundStyle(.teal) }
+                            }
+                            Spacer(minLength: 12)
+                            VStack(alignment: .trailing, spacing: 5) {
+                                Text(DiskFormat.bytes(model.largeBasis.size(node))).font(.system(size: 14, weight: .semibold, design: .rounded)).monospacedDigit()
+                                Text(model.largeBasis == .allocated ? "逻辑 " + DiskFormat.bytes(node.logical) : "占用 " + DiskFormat.bytes(node.allocated)).font(.system(size: 10)).foregroundStyle(.secondary)
+                                Button("在 Finder 中显示") { model.reveal(node.path) }.buttonStyle(DiskButtonStyle(kind: .quiet)).controlSize(.small).accessibilityLabel("定位 " + node.name)
+                            }
                         }
-                        Spacer(minLength: 12)
-                        VStack(alignment: .trailing, spacing: 5) {
-                            Text(DiskFormat.bytes(model.largeBasis.size(node))).font(.system(size: 14, weight: .semibold, design: .rounded)).monospacedDigit()
-                            Text(model.largeBasis == .allocated ? "逻辑 " + DiskFormat.bytes(node.logical) : "占用 " + DiskFormat.bytes(node.allocated)).font(.system(size: 10)).foregroundStyle(.secondary)
-                            Button("在 Finder 中显示") { model.reveal(node.path) }.buttonStyle(DiskButtonStyle(kind: .quiet)).controlSize(.small).accessibilityLabel("定位 " + node.name)
-                        }
-                    }.padding(.vertical, 10).contentShape(Rectangle())
-                        .contextMenu { Button("在 Finder 中显示") { model.reveal(node.path) }; Button("复制路径") { model.copyPath(node.path) } }
+                    }.contextMenu { Button("在 Finder 中显示") { model.reveal(node.path) }; Button("复制路径") { model.copyPath(node.path) } }
                     Divider().opacity(0.6)
                 }
             } }
@@ -135,40 +136,42 @@ struct ProjectsPage: View {
                         Text("当前扫描范围内未发现符合筛选条件的开发工程。").font(.system(size: 12)).foregroundStyle(.secondary).padding(.vertical, 28)
                     }
                     ForEach(model.projects) { project in
-                        HStack(alignment: .top, spacing: 12) {
-                            Image(systemName: "hammer.circle.fill").font(.system(size: 20)).foregroundStyle(DiskTheme.accent).frame(width: 28).padding(.top, 2)
-                            VStack(alignment: .leading, spacing: 5) {
-                                HStack(spacing: 6) {
-                                    Text(project.name).font(.system(size: 13, weight: .semibold))
-                                    Tag(text: project.markers.prefix(2).joined(separator: " · "), color: .teal)
-                                    if let ts = project.modifiedAt, ts <= Int64(Date().timeIntervalSince1970) - 90 * 86_400 {
-                                        Tag(text: "久未活跃", color: .orange)
+                        DiskInteractiveRow(horizontalPadding: 8, verticalPadding: 10) {
+                            HStack(alignment: .top, spacing: 12) {
+                                Image(systemName: "hammer.circle.fill").font(.system(size: 20)).foregroundStyle(DiskTheme.accent).frame(width: 28).padding(.top, 2)
+                                VStack(alignment: .leading, spacing: 5) {
+                                    HStack(spacing: 6) {
+                                        Text(project.name).font(.system(size: 13, weight: .semibold))
+                                        Tag(text: project.markers.prefix(2).joined(separator: " · "), color: .teal)
+                                        if let ts = project.modifiedAt, ts <= Int64(Date().timeIntervalSince1970) - 90 * 86_400 {
+                                            Tag(text: "久未活跃", color: .orange)
+                                        }
+                                    }
+                                    Text(DiskFormat.compactPath(project.path)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).help(project.path)
+                                    HStack(spacing: 12) {
+                                        Text("\(project.fileCount.formatted()) 文件")
+                                        Text("源码与资产 \(DiskFormat.bytes(project.nonCacheAllocated))")
+                                        if project.cacheAllocated > 0 {
+                                            Text("构建缓存 \(DiskFormat.bytes(project.cacheAllocated)) (\(Int((project.cacheRatio * 100).rounded()))%)").foregroundStyle(DiskTheme.purple)
+                                        }
+                                        if let ts = project.modifiedAt {
+                                            Text("最近活跃 \(Date(timeIntervalSince1970: TimeInterval(ts)).formatted(date: .abbreviated, time: .omitted))")
+                                        }
+                                    }.font(.system(size: 10)).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                VStack(alignment: .trailing, spacing: 6) {
+                                    Text(DiskFormat.bytes(project.allocated)).font(.system(size: 14, weight: .semibold, design: .rounded)).monospacedDigit()
+                                    HStack(spacing: 8) {
+                                        if !project.cachePaths.isEmpty {
+                                            Button("前往清理建议") { model.selectProjectCaches(project) }.buttonStyle(DiskButtonStyle(kind: .quiet)).font(.system(size: 10)).foregroundStyle(DiskTheme.purple)
+                                        }
+                                        Button("概览中查看") { model.browseProject(project) }.buttonStyle(DiskButtonStyle(kind: .quiet)).font(.system(size: 10)).foregroundStyle(DiskTheme.accent)
+                                        Button("在 Finder 中显示") { model.reveal(project.path) }.buttonStyle(DiskButtonStyle(kind: .quiet)).font(.system(size: 10)).foregroundStyle(.secondary)
                                     }
                                 }
-                                Text(DiskFormat.compactPath(project.path)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).help(project.path)
-                                HStack(spacing: 12) {
-                                    Text("\(project.fileCount.formatted()) 文件")
-                                    Text("源码与资产 \(DiskFormat.bytes(project.nonCacheAllocated))")
-                                    if project.cacheAllocated > 0 {
-                                        Text("构建缓存 \(DiskFormat.bytes(project.cacheAllocated)) (\(Int((project.cacheRatio * 100).rounded()))%)").foregroundStyle(DiskTheme.purple)
-                                    }
-                                    if let ts = project.modifiedAt {
-                                        Text("最近活跃 \(Date(timeIntervalSince1970: TimeInterval(ts)).formatted(date: .abbreviated, time: .omitted))")
-                                    }
-                                }.font(.system(size: 10)).foregroundStyle(.secondary)
                             }
-                            Spacer()
-                            VStack(alignment: .trailing, spacing: 6) {
-                                Text(DiskFormat.bytes(project.allocated)).font(.system(size: 14, weight: .semibold, design: .rounded)).monospacedDigit()
-                                HStack(spacing: 8) {
-                                    if !project.cachePaths.isEmpty {
-                                        Button("前往清理建议") { model.selectProjectCaches(project) }.buttonStyle(DiskButtonStyle(kind: .quiet)).font(.system(size: 10)).foregroundStyle(DiskTheme.purple)
-                                    }
-                                    Button("概览中查看") { model.browseProject(project) }.buttonStyle(DiskButtonStyle(kind: .quiet)).font(.system(size: 10)).foregroundStyle(DiskTheme.accent)
-                                    Button("在 Finder 中显示") { model.reveal(project.path) }.buttonStyle(DiskButtonStyle(kind: .quiet)).font(.system(size: 10)).foregroundStyle(.secondary)
-                                }
-                            }
-                        }.padding(.vertical, 10).contentShape(Rectangle())
+                        }.onTapGesture { model.browseProject(project) }
                             .contextMenu { Button("概览中查看") { model.browseProject(project) }; Button("在 Finder 中显示") { model.reveal(project.path) }; Button("复制路径") { model.copyPath(project.path) } }
                         if project.id != model.projects.last?.id { Divider().opacity(0.6) }
                     }

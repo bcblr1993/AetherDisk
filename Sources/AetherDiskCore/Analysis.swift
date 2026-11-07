@@ -168,6 +168,11 @@ public enum RecommendationQuery {
     public static func staleEligibleIDs(_ items: [Recommendation], days: Int = 90, referenceDate: Date = Date()) -> Set<String> {
         Set(items.filter { !$0.blocked && $0.isStale(days: days, referenceDate: referenceDate) }.map(\.id))
     }
+    public static func sanitizedSelection(_ selected: Set<String>, in items: [Recommendation], fresh: Bool) -> Set<String> {
+        guard fresh else { return [] }
+        let allowed = Set(items.filter { !$0.blocked }.map(\.id))
+        return selected.intersection(allowed)
+    }
     public static func categoryTotals(_ items: [Recommendation]) -> [(category: CacheCategory, allocated: Int64, count: Int)] {
         var map: [CacheCategory: (allocated: Int64, count: Int)] = [:]
         for item in items {
@@ -212,6 +217,29 @@ public enum HierarchyBrowser {
             return (node.path, node.path)
         }
         return (node.path, nil)
+    }
+    public static func parentScope(root: String, current: String) -> String? {
+        let stdRoot = URL(fileURLWithPath: root).standardizedFileURL.path
+        let stdCurrent = URL(fileURLWithPath: current).standardizedFileURL.path
+        guard stdCurrent != stdRoot, stdCurrent != "/", stdCurrent.hasPrefix(stdRoot == "/" ? "/" : stdRoot + "/") else { return nil }
+        let parent = URL(fileURLWithPath: stdCurrent).deletingLastPathComponent().path
+        return parent == stdRoot ? nil : parent
+    }
+    public static func resolveNavigationTarget(for path: String, in result: ScanResult?) -> (browseScope: String?, selectedPath: String?)? {
+        guard let result else { return nil }
+        let stdRoot = URL(fileURLWithPath: result.root).standardizedFileURL.path
+        let stdPath = URL(fileURLWithPath: path).standardizedFileURL.path
+        guard stdPath == stdRoot || stdPath.hasPrefix(stdRoot == "/" ? "/" : stdRoot + "/") else { return nil }
+        if canBrowse(.init(path: stdPath, kind: .directory), in: result) {
+            let scope = stdPath == stdRoot ? nil : stdPath
+            let firstChild = result.nodes.filter { $0.parent == stdPath && $0.path != stdPath }.sorted { $0.allocated == $1.allocated ? $0.path < $1.path : $0.allocated > $1.allocated }.first?.path
+            return (scope, firstChild)
+        }
+        if result.nodes.contains(where: { $0.path == stdPath }) {
+            let parent = URL(fileURLWithPath: stdPath).deletingLastPathComponent().path
+            return (parent == stdRoot ? nil : parent, stdPath)
+        }
+        return nil
     }
     public static func breadcrumbs(root: String, current: String) -> [(name: String, path: String)] {
         let stdRoot = URL(fileURLWithPath: root).standardizedFileURL.path
