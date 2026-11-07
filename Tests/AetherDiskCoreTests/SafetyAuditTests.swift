@@ -242,6 +242,56 @@ final class SafetyAuditTests: XCTestCase, @unchecked Sendable {
         let symEntry = try XCTUnwrap(bulk.first { $0.name == "sym" })
         XCTAssertTrue(symEntry.isSymlink)
     }
+
+    func testExpandedPlatformDeviceSupportAndEcosystemCacheRules() throws {
+        let macSupport = try file("Home/Library/Developer/Xcode/macOS DeviceSupport/15.0/sym.data").deletingLastPathComponent().deletingLastPathComponent()
+        let tvSupport = try file("Home/Library/Developer/Xcode/tvOS DeviceSupport/18.0/sym.data").deletingLastPathComponent().deletingLastPathComponent()
+        let visionSupport = try file("Home/Library/Developer/Xcode/visionOS DeviceSupport/2.0/sym.data").deletingLastPathComponent().deletingLastPathComponent()
+        XCTAssertEqual(RuleCatalog.category(for: macSupport, home: home), .xcode)
+        XCTAssertEqual(RuleCatalog.category(for: tvSupport, home: home), .xcode)
+        XCTAssertEqual(RuleCatalog.category(for: visionSupport, home: home), .xcode)
+
+        let podsCache = try file("Home/Library/Caches/CocoaPods/Pods/spec.data").deletingLastPathComponent().deletingLastPathComponent()
+        let pubCache = try file("Home/.pub-cache/hosted/pkg.data").deletingLastPathComponent().deletingLastPathComponent()
+        let sbtBoot = try file("Home/.sbt/boot/scala.data").deletingLastPathComponent()
+        let ivyCache = try file("Home/.ivy2/cache/org.data").deletingLastPathComponent()
+        let hfHub = try file("Home/.cache/huggingface/hub/model.data").deletingLastPathComponent()
+        let playwright = try file("Home/.cache/playwright/webkit.data").deletingLastPathComponent()
+        XCTAssertEqual(RuleCatalog.category(for: podsCache, home: home), .compiler)
+        XCTAssertEqual(RuleCatalog.category(for: pubCache, home: home), .compiler)
+        XCTAssertEqual(RuleCatalog.category(for: sbtBoot, home: home), .compiler)
+        XCTAssertEqual(RuleCatalog.category(for: ivyCache, home: home), .compiler)
+        XCTAssertEqual(RuleCatalog.category(for: hfHub, home: home), .compiler)
+        XCTAssertEqual(RuleCatalog.category(for: playwright, home: home), .compiler)
+
+        let ngCache = try file("Home/ng-app/.angular/cache/chunk.bin").deletingLastPathComponent()
+        let astroCache = try file("Home/astro-app/.astro/content.bin").deletingLastPathComponent()
+        let viteCache = try file("Home/vite-app/.vite/deps.bin").deletingLastPathComponent()
+        let toxCache = try file("Home/py-tox/.tox/env.bin").deletingLastPathComponent()
+        let kotlinCache = try file("Home/kt-app/.kotlin/sessions.bin").deletingLastPathComponent()
+        XCTAssertNil(RuleCatalog.category(for: ngCache, home: home))
+        XCTAssertNil(RuleCatalog.category(for: astroCache, home: home))
+        XCTAssertNil(RuleCatalog.category(for: viteCache, home: home))
+        XCTAssertNil(RuleCatalog.category(for: toxCache, home: home))
+        XCTAssertNil(RuleCatalog.category(for: kotlinCache, home: home))
+
+        try file("Home/ng-app/angular.json")
+        try file("Home/astro-app/package.json")
+        try file("Home/vite-app/package.json")
+        try file("Home/py-tox/tox.ini")
+        try file("Home/kt-app/build.gradle.kts")
+        XCTAssertEqual(RuleCatalog.category(for: ngCache, home: home), .build)
+        XCTAssertEqual(RuleCatalog.category(for: astroCache, home: home), .build)
+        XCTAssertEqual(RuleCatalog.category(for: viteCache, home: home), .build)
+        XCTAssertEqual(RuleCatalog.category(for: toxCache, home: home), .build)
+        XCTAssertEqual(RuleCatalog.category(for: kotlinCache, home: home), .build)
+
+        let markers = RuleCatalog.projectMarkers(in: ["README.md", "go.mod", "composer.json", "mix.exs", "angular.json"])
+        XCTAssertEqual(markers, ["angular.json", "composer.json", "go.mod", "mix.exs"])
+        XCTAssertTrue(RuleCatalog.protection(name: "go.mod", directory: false).contains(.source))
+        XCTAssertTrue(RuleCatalog.protection(name: "angular.json", directory: false).contains(.source))
+        XCTAssertTrue(RuleCatalog.protection(name: "tox.ini", directory: false).contains(.source))
+    }
 }
 private final class LockedCount: @unchecked Sendable {
     private let lock = NSLock(); private var count = 0

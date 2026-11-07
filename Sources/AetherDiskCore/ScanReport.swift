@@ -19,6 +19,9 @@ public enum ScanReport {
         row("summary", .init(path: result.root, allocated: result.allocated, logical: result.logical, fileCount: result.files))
         for n in result.nodes { row("directory_sample", n) }
         for rec in result.recommendations { row("recommendation", rec.node) }
+        for proj in result.analysis?.projects ?? [] {
+            row("project", .init(path: proj.path, kind: .directory, allocated: proj.allocated, logical: proj.logical, fileCount: proj.fileCount, protection: proj.protection, modifiedAt: proj.modifiedAt))
+        }
         for n in result.analysis?.largeFiles ?? [] { row("large_file", n) }
         for usage in result.analysis?.fileTypes ?? [] {
             row("file_type", .init(path: usage.category.rawValue, kind: .file, allocated: usage.allocated, logical: usage.logical, fileCount: usage.files))

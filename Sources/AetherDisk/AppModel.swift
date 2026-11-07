@@ -17,6 +17,7 @@ final class AppModel: ObservableObject {
     @Published var suggestionFilter: SuggestionFilter = .all
     @Published var suggestionCategory: CacheCategory?
     @Published var suggestionQuery = ""
+    @Published var suggestionStaleOnly = false
     @Published var comparisonDepth: ComparisonDepth = .top
     @Published var comparisonDirection: ChangeDirection = .all
     @Published var comparisonQuery = ""
@@ -49,7 +50,14 @@ final class AppModel: ObservableObject {
         (result?.recommendations ?? []).map { r in var value = r; value.node = UserProtection.apply(r.node, paths: protectedPaths); return value }
     }
     var filteredRecommendations: [Recommendation] {
-        RecommendationQuery.rows(recommendations, filter: suggestionFilter, category: suggestionCategory, query: suggestionQuery)
+        RecommendationQuery.rows(recommendations, filter: suggestionFilter, category: suggestionCategory, query: suggestionQuery, staleOnly: suggestionStaleOnly)
+    }
+    var staleEligibleCacheIDs: Set<String> {
+        RecommendationQuery.staleEligibleIDs(recommendations)
+    }
+    func selectStaleEligibleCaches() {
+        guard fresh, !scanning, !checking else { return }
+        selectedCaches.formUnion(staleEligibleCacheIDs)
     }
     var recommendationCategoryTotals: [(category: CacheCategory, allocated: Int64, count: Int)] {
         RecommendationQuery.categoryTotals(recommendations)
@@ -67,6 +75,19 @@ final class AppModel: ObservableObject {
             selectedCaches.insert(path)
         }
         page = "suggestions"
+    }
+    func browseProject(_ project: ProjectSummary) {
+        if let result, HierarchyBrowser.canBrowse(.init(path: project.path, kind: .directory), in: result) {
+            page = "overview"
+            browse(project.path)
+        } else if let result, result.nodes.contains(where: { $0.path == project.path }) {
+            page = "overview"
+            let parent = URL(fileURLWithPath: project.path).deletingLastPathComponent().path
+            browse(parent == result.root ? nil : parent)
+            selectedPath = project.path
+        } else {
+            reveal(project.path)
+        }
     }
     var activeScope: String { browsePath ?? (result?.root ?? root.path) }
     var isBrowsingSubfolder: Bool {
@@ -175,7 +196,7 @@ final class AppModel: ObservableObject {
         token.cancel(); worker?.cancel(); token = .init(); let thisToken = token
         generation = UUID(); let id = generation
         root = (url ?? root).standardizedFileURL; let scope = root
-        query = ""; browsePath = nil; rankingLimit = 40; suggestionQuery = ""; comparisonQuery = ""; plan = nil; showIssues = false
+        query = ""; browsePath = nil; rankingLimit = 40; suggestionQuery = ""; suggestionStaleOnly = false; comparisonQuery = ""; plan = nil; showIssues = false
         volume = .read(at: root); history = loadHistory(root: root); previous = history.first
         result = nil; scanning = true; fresh = false; selectedCaches = []; selectedPath = nil; message = nil; progress = .init()
         let updateHandler: @Sendable (ScanProgress) -> Void = { [weak self] update in

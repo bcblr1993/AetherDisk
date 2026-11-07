@@ -228,8 +228,31 @@ struct ContentView: View {
                 VStack(spacing: 0) {
                     PanelTitle(title: "建议清单", caption: "默认不勾选").padding(.bottom, 12)
                     if !model.recommendations.isEmpty {
+                        if !model.recommendationCategoryTotals.isEmpty {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 6) {
+                                    ForEach(model.recommendationCategoryTotals, id: \.category) { item in
+                                        Button {
+                                            model.suggestionCategory = (model.suggestionCategory == item.category) ? nil : item.category
+                                        } label: {
+                                            Text("\(item.category.title) \(DiskFormat.bytes(item.allocated)) (\(item.count))")
+                                                .font(.system(size: 10, weight: model.suggestionCategory == item.category ? .semibold : .regular))
+                                                .padding(.horizontal, 8).padding(.vertical, 3)
+                                                .background(model.suggestionCategory == item.category ? DiskTheme.accent.opacity(0.16) : DiskTheme.inset, in: Capsule())
+                                        }.buttonStyle(DiskButtonStyle(kind: .quiet))
+                                    }
+                                }
+                            }.padding(.bottom, 8)
+                        }
                         HStack(spacing: 10) {
                             DiskSearchField(placeholder: "搜索缓存名称或路径", text: $model.suggestionQuery, identifier: "suggestion-search")
+                            Toggle("仅看 90 天未改", isOn: $model.suggestionStaleOnly).toggleStyle(.checkbox).font(.system(size: 11)).accessibilityIdentifier("suggestion-stale-only")
+                            if !model.staleEligibleCacheIDs.isEmpty {
+                                Button("勾选 90 天未改可检项") { model.selectStaleEligibleCaches() }
+                                    .buttonStyle(DiskButtonStyle(kind: .quiet)).font(.system(size: 10)).foregroundStyle(DiskTheme.purple)
+                                    .disabled(!model.fresh || model.scanning || model.checking)
+                                    .accessibilityIdentifier("select-stale-caches")
+                            }
                             Picker("状态", selection: $model.suggestionFilter) {
                                 ForEach(SuggestionFilter.allCases) { item in Text(item.title).tag(item) }
                             }.pickerStyle(.segmented).labelsHidden().frame(width: 168).accessibilityIdentifier("suggestion-filter")

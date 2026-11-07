@@ -12,7 +12,10 @@ public enum RuleCatalog {
             "/Library/Developer/CoreSimulator/Caches",
             "/Library/Developer/Xcode/DocumentationCache",
             "/Library/Developer/Xcode/iOS DeviceSupport",
-            "/Library/Developer/Xcode/watchOS DeviceSupport"
+            "/Library/Developer/Xcode/watchOS DeviceSupport",
+            "/Library/Developer/Xcode/macOS DeviceSupport",
+            "/Library/Developer/Xcode/tvOS DeviceSupport",
+            "/Library/Developer/Xcode/visionOS DeviceSupport"
         ]
         if xcodePaths.contains(where: { path == h + $0 }) { return .xcode }
         if path.hasPrefix(h + "/.cache/codex-runtimes/codex-runtime-install-") && url.deletingLastPathComponent().path == h + "/.cache/codex-runtimes" { return .update }
@@ -20,6 +23,8 @@ public enum RuleCatalog {
             "/.docker/scout/sbom", "/.npm/_cacache", "/.nvm/.cache",
             "/.cache/go-build", "/.cache/pip/http-v2", "/.cache/uv", "/.gradle/caches",
             "/.cargo/registry/cache", "/.pnpm-store", "/.bun/install/cache", "/.yarn/berry/cache",
+            "/Library/Caches/CocoaPods", "/.pub-cache", "/.sbt/boot", "/.ivy2/cache",
+            "/.cache/huggingface/hub", "/.cache/playwright",
             "/Library/Application Support/Claude/Cache", "/Library/Application Support/Claude/Code Cache",
             "/Library/Application Support/Code/Cache", "/Library/Application Support/Code/CachedData",
             "/Library/Application Support/Cursor/Cache", "/Library/Application Support/Cursor/CachedData"
@@ -34,11 +39,12 @@ public enum RuleCatalog {
         if url.lastPathComponent == "target", marker(["Cargo.toml", "pom.xml"]) { return .build }
         if url.lastPathComponent == ".build", marker(["Package.swift"]) { return .build }
         if url.lastPathComponent == ".dart_tool", marker(["pubspec.yaml"]) { return .build }
-        if url.lastPathComponent == ".gradle", marker(["settings.gradle", "settings.gradle.kts", "build.gradle", "build.gradle.kts"]) { return .build }
+        if [".gradle", ".kotlin"].contains(url.lastPathComponent), marker(["settings.gradle", "settings.gradle.kts", "build.gradle", "build.gradle.kts"]) { return .build }
         if url.lastPathComponent == "DerivedData", marker(["project.yml"]) { return .build }
-        if [".ruff_cache", ".pytest_cache", ".mypy_cache"].contains(url.lastPathComponent), marker(["pyproject.toml", "setup.py"]) { return .build }
-        if [".nuxt", ".turbo", ".svelte-kit", ".parcel-cache"].contains(url.lastPathComponent), marker(["package.json"]) { return .build }
+        if [".ruff_cache", ".pytest_cache", ".mypy_cache", ".tox", ".nox"].contains(url.lastPathComponent), marker(["pyproject.toml", "setup.py", "tox.ini"]) { return .build }
+        if [".nuxt", ".turbo", ".svelte-kit", ".parcel-cache", ".astro", ".vite"].contains(url.lastPathComponent), marker(["package.json"]) { return .build }
         if url.lastPathComponent == "cache", parent.lastPathComponent == ".next", marker(["package.json"], in: parent.deletingLastPathComponent()) { return .build }
+        if url.lastPathComponent == "cache", parent.lastPathComponent == ".angular", marker(["angular.json", "package.json"], in: parent.deletingLastPathComponent()) { return .build }
         if url.lastPathComponent == "build", marker(["Package.swift", "pubspec.yaml", "project.yml", "build.gradle", "build.gradle.kts", "CMakeLists.txt"]) { return .build }
         return nil
     }
@@ -53,7 +59,7 @@ public enum RuleCatalog {
             let ext = (n as NSString).pathExtension
             if ["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "pages", "numbers", "keynote", "csv", "md", "rtf", "epub"].contains(ext) { flags.insert(.document) }
             if ["dmg", "pkg", "ipa", "apk", "aab", "zip", "gz", "xz", "tar", "7z", "rar", "deb", "rpm", "exe", "msi", "msix", "msixbundle", "appimage", "jar", "war", "whl", "bz2", "zst", "uf2", "hex", "tgz", "tbz", "tbz2", "txz", "tzst", "xip", "iso", "img", "ipsw", "aar", "nupkg", "cab", "msu", "msp", "vhd", "vhdx", "vmdk", "qcow2", "bin", "run"].contains(ext) || n.contains("sha256sums") || n == "appcast.xml" { flags.insert(.installer) }
-            if ["swift", "rs", "c", "h", "cpp", "m", "mm", "py", "js", "ts", "tsx", "vue", "astro", "dart", "java", "kt", "sh", "go", "rb", "sql", "lua", "pl", "ps1", "bat", "cs", "fs", "cc", "cxx", "hpp", "hxx", "asm", "zig", "ex", "exs", "erl", "clj", "hs", "r", "jl", "ipynb", "html", "css", "scss", "svelte", "jsx", "kts", "gradle", "bash", "zsh", "fish", "cmake", "sln", "csproj", "vb", "vbs", "php", "phtml", "pas", "f90", "f95", "f03", "f08", "for", "f", "vue", "less", "sass", "styl", "proto", "graphql", "gql", "tex", "sty", "cls", "s", "ino"].contains(ext) || ["cargo.toml", "package.json", "pom.xml", "project.yml", "pubspec.yaml", "agents.md", ".gitignore", ".gitattributes", ".gitmodules", "makefile", "gnumakefile", "cmakelists.txt", "dockerfile", "jenkinsfile", "gemfile", "rakefile", "justfile", "meson.build", "build.ninja", "configure", "gradlew", "mvnw"].contains(n) { flags.insert(.source) }
+            if ["swift", "rs", "c", "h", "cpp", "m", "mm", "py", "js", "ts", "tsx", "vue", "astro", "dart", "java", "kt", "sh", "go", "rb", "sql", "lua", "pl", "ps1", "bat", "cs", "fs", "cc", "cxx", "hpp", "hxx", "asm", "zig", "ex", "exs", "erl", "clj", "hs", "r", "jl", "ipynb", "html", "css", "scss", "svelte", "jsx", "kts", "gradle", "bash", "zsh", "fish", "cmake", "sln", "csproj", "vb", "vbs", "php", "phtml", "pas", "f90", "f95", "f03", "f08", "for", "f", "vue", "less", "sass", "styl", "proto", "graphql", "gql", "tex", "sty", "cls", "s", "ino"].contains(ext) || ["cargo.toml", "package.json", "pom.xml", "project.yml", "pubspec.yaml", "agents.md", ".gitignore", ".gitattributes", ".gitmodules", "makefile", "gnumakefile", "cmakelists.txt", "dockerfile", "jenkinsfile", "gemfile", "rakefile", "justfile", "meson.build", "build.ninja", "configure", "gradlew", "mvnw", "go.mod", "composer.json", "mix.exs", "angular.json", "tox.ini", "pyproject.toml", "setup.py"].contains(n) { flags.insert(.source) }
         }
         return flags
     }
@@ -76,7 +82,7 @@ public enum RuleCatalog {
         return result.sorted { $0.node.allocated > $1.node.allocated }
     }
     public static func projectMarkers(in children: [String]) -> [String] {
-        let known: Set<String> = [".git", "Package.swift", "Cargo.toml", "pom.xml", "build.gradle", "build.gradle.kts", "CMakeLists.txt", "package.json", "pyproject.toml", "setup.py", "pubspec.yaml", "project.yml"]
+        let known: Set<String> = [".git", "Package.swift", "Cargo.toml", "pom.xml", "build.gradle", "build.gradle.kts", "CMakeLists.txt", "package.json", "pyproject.toml", "setup.py", "pubspec.yaml", "project.yml", "go.mod", "composer.json", "Gemfile", "mix.exs", "angular.json"]
         return children.filter { known.contains($0) }.sorted()
     }
 }

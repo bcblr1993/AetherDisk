@@ -62,23 +62,59 @@ public struct ProjectSummary: Codable, Sendable, Equatable, Identifiable {
     public var cachePaths: [String]
     public var modifiedAt: Int64?
     public var protection: Set<Protection>
+    public var nonCacheAllocated: Int64 { max(0, allocated - cacheAllocated) }
+    public var cacheRatio: Double { allocated > 0 ? min(1, Double(cacheAllocated) / Double(allocated)) : 0 }
     public init(path: String, markers: [String], allocated: Int64, logical: Int64, fileCount: Int, cacheAllocated: Int64 = 0, cachePaths: [String] = [], modifiedAt: Int64? = nil, protection: Set<Protection> = []) {
         self.path = path; self.markers = markers; self.allocated = allocated; self.logical = logical; self.fileCount = fileCount; self.cacheAllocated = cacheAllocated; self.cachePaths = cachePaths; self.modifiedAt = modifiedAt; self.protection = protection
+    }
+}
+public enum AgeBucket: String, Codable, CaseIterable, Sendable, Identifiable {
+    case recent30d, days30to90, days90to365, over1y
+    public var id: String { rawValue }
+    public var title: String {
+        switch self {
+        case .recent30d: "近 30 天"; case .days30to90: "30–90 天"; case .days90to365: "90 天–1 年"; case .over1y: "1 年以上未改"
+        }
+    }
+    public var staleDaysFilter: Int {
+        switch self {
+        case .recent30d: 0; case .days30to90: 30; case .days90to365: 90; case .over1y: 365
+        }
+    }
+    public static func classify(modifiedAt: Int64?, referenceDate: Date = Date()) -> Self {
+        guard let ts = modifiedAt else { return .recent30d }
+        let ageDays = max(0, (Int64(referenceDate.timeIntervalSince1970) - ts) / 86_400)
+        if ageDays >= 365 { return .over1y }
+        if ageDays >= 90 { return .days90to365 }
+        if ageDays >= 30 { return .days30to90 }
+        return .recent30d
+    }
+}
+public struct AgeBucketUsage: Codable, Sendable, Equatable, Identifiable {
+    public var id: AgeBucket { bucket }
+    public var bucket: AgeBucket
+    public var allocated: Int64 = 0
+    public var logical: Int64 = 0
+    public var files: Int = 0
+    public init(bucket: AgeBucket, allocated: Int64 = 0, logical: Int64 = 0, files: Int = 0) {
+        self.bucket = bucket; self.allocated = allocated; self.logical = logical; self.files = files
     }
 }
 public struct ScanAnalysis: Codable, Sendable {
     public var fileTypes: [FileTypeUsage]
     public var largeFiles: [DiskNode]
     public var projects: [ProjectSummary]
-    enum CodingKeys: String, CodingKey { case fileTypes, largeFiles, projects }
-    public init(fileTypes: [FileTypeUsage], largeFiles: [DiskNode], projects: [ProjectSummary] = []) {
-        self.fileTypes = fileTypes; self.largeFiles = largeFiles; self.projects = projects
+    public var ageBuckets: [AgeBucketUsage]
+    enum CodingKeys: String, CodingKey { case fileTypes, largeFiles, projects, ageBuckets }
+    public init(fileTypes: [FileTypeUsage], largeFiles: [DiskNode], projects: [ProjectSummary] = [], ageBuckets: [AgeBucketUsage] = []) {
+        self.fileTypes = fileTypes; self.largeFiles = largeFiles; self.projects = projects; self.ageBuckets = ageBuckets
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         fileTypes = try c.decode([FileTypeUsage].self, forKey: .fileTypes)
         largeFiles = try c.decode([DiskNode].self, forKey: .largeFiles)
         projects = (try? c.decode([ProjectSummary].self, forKey: .projects)) ?? []
+        ageBuckets = (try? c.decode([AgeBucketUsage].self, forKey: .ageBuckets)) ?? []
     }
 }
 public enum SizeBasis: String, CaseIterable, Sendable, Identifiable {
@@ -120,13 +156,17 @@ public enum SuggestionFilter: String, CaseIterable, Sendable, Identifiable {
     }
 }
 public enum RecommendationQuery {
-    public static func rows(_ items: [Recommendation], filter: SuggestionFilter = .all, category: CacheCategory? = nil, query: String = "") -> [Recommendation] {
+    public static func rows(_ items: [Recommendation], filter: SuggestionFilter = .all, category: CacheCategory? = nil, query: String = "", staleOnly: Bool = false, staleDays: Int = 90, referenceDate: Date = Date()) -> [Recommendation] {
         items.filter { item in
             let matchesFilter = filter == .all || (filter == .eligible && !item.blocked) || (filter == .protected && item.blocked)
             let matchesCategory = category == nil || item.category == category
             let matchesQuery = query.isEmpty || item.node.name.localizedCaseInsensitiveContains(query) || item.id.localizedCaseInsensitiveContains(query)
-            return matchesFilter && matchesCategory && matchesQuery
+            let matchesStale = !staleOnly || item.isStale(days: staleDays, referenceDate: referenceDate)
+            return matchesFilter && matchesCategory && matchesQuery && matchesStale
         }
+    }
+    public static func staleEligibleIDs(_ items: [Recommendation], days: Int = 90, referenceDate: Date = Date()) -> Set<String> {
+        Set(items.filter { !$0.blocked && $0.isStale(days: days, referenceDate: referenceDate) }.map(\.id))
     }
     public static func categoryTotals(_ items: [Recommendation]) -> [(category: CacheCategory, allocated: Int64, count: Int)] {
         var map: [CacheCategory: (allocated: Int64, count: Int)] = [:]
@@ -139,10 +179,10 @@ public enum RecommendationQuery {
     }
 }
 public enum ProjectSort: String, CaseIterable, Sendable, Identifiable {
-    case allocated, cache, stale
+    case allocated, cache, nonCache, stale
     public var id: String { rawValue }
     public var title: String {
-        switch self { case .allocated: "总占用"; case .cache: "构建缓存"; case .stale: "久未活跃" }
+        switch self { case .allocated: "总占用"; case .cache: "构建缓存"; case .nonCache: "源码与资产"; case .stale: "久未活跃" }
     }
 }
 public enum ProjectWorkspaceQuery {
@@ -153,6 +193,7 @@ public enum ProjectWorkspaceQuery {
             switch sort {
             case .allocated: return a.allocated == b.allocated ? a.path < b.path : a.allocated > b.allocated
             case .cache: return a.cacheAllocated == b.cacheAllocated ? (a.allocated == b.allocated ? a.path < b.path : a.allocated > b.allocated) : a.cacheAllocated > b.cacheAllocated
+            case .nonCache: return a.nonCacheAllocated == b.nonCacheAllocated ? (a.allocated == b.allocated ? a.path < b.path : a.allocated > b.allocated) : a.nonCacheAllocated > b.nonCacheAllocated
             case .stale:
                 let ma = a.modifiedAt ?? Int64.max
                 let mb = b.modifiedAt ?? Int64.max
@@ -187,6 +228,7 @@ public enum HierarchyBrowser {
 struct AnalysisAccumulator {
     var types: [FileCategory: FileTypeUsage] = [:]
     var extMap: [FileCategory: [String: ExtensionUsage]] = [:]
+    var ageMap: [AgeBucket: AgeBucketUsage] = [:]
     var physical: [DiskNode] = []; var logical: [DiskNode] = []
     var physicalFloor: Int64 = 0; var logicalFloor: Int64 = 0
     mutating func record(_ node: DiskNode) {
@@ -199,6 +241,10 @@ struct AnalysisAccumulator {
         var extUsage = catExts[extKey] ?? .init(ext: extKey)
         extUsage.allocated += node.allocated; extUsage.logical += node.logical; extUsage.files += 1
         catExts[extKey] = extUsage; extMap[category] = catExts
+        let bucket = AgeBucket.classify(modifiedAt: node.modifiedAt)
+        var bUsage = ageMap[bucket] ?? .init(bucket: bucket)
+        bUsage.allocated += node.allocated; bUsage.logical += node.logical; bUsage.files += 1
+        ageMap[bucket] = bUsage
         if node.allocated >= 1024 * 1024 && (physical.count < 200 || node.allocated >= physicalFloor) {
             physical.append(node)
             if physical.count >= 400 { physical.sort { $0.allocated > $1.allocated }; physical = Array(physical.prefix(200)); physicalFloor = physical.last?.allocated ?? 0 }
@@ -217,7 +263,8 @@ struct AnalysisAccumulator {
             copy.extensions = Array(exts.prefix(10))
             return copy
         }.sorted { $0.allocated == $1.allocated ? $0.category.rawValue < $1.category.rawValue : $0.allocated > $1.allocated }
-        return .init(fileTypes: enrichedTypes, largeFiles: unique.values.sorted { $0.allocated == $1.allocated ? $0.path < $1.path : $0.allocated > $1.allocated }, projects: projects)
+        let orderedBuckets = AgeBucket.allCases.map { ageMap[$0] ?? .init(bucket: $0) }
+        return .init(fileTypes: enrichedTypes, largeFiles: unique.values.sorted { $0.allocated == $1.allocated ? $0.path < $1.path : $0.allocated > $1.allocated }, projects: projects, ageBuckets: orderedBuckets)
     }
 }
 public enum UserProtection {

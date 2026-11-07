@@ -280,4 +280,76 @@ final class AnalysisTests: XCTestCase, @unchecked Sendable {
         XCTAssertFalse(recs[1].isStale(days: 90, referenceDate: now))
     }
 
+    func testFileAgeBucketDistributionAndLegacyDecoding() throws {
+        let home = root.appendingPathComponent("Home")
+        let now = Date()
+        let fRecent = try file("Home/AgeTest/recent.bin", bytes: 4096)
+        let f60d = try file("Home/AgeTest/mid.bin", bytes: 8192)
+        let f180d = try file("Home/AgeTest/old.bin", bytes: 12288)
+        let f400d = try file("Home/AgeTest/ancient.bin", bytes: 16384)
+        try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-5 * 86_400)], ofItemAtPath: fRecent.path)
+        try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-60 * 86_400)], ofItemAtPath: f60d.path)
+        try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-180 * 86_400)], ofItemAtPath: f180d.path)
+        try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-400 * 86_400)], ofItemAtPath: f400d.path)
+
+        let result = try DiskScanner.scan(root: home.appendingPathComponent("AgeTest"), home: home)
+        let buckets = try XCTUnwrap(result.analysis?.ageBuckets)
+        XCTAssertEqual(buckets.count, 4)
+        let map = Dictionary(uniqueKeysWithValues: buckets.map { ($0.bucket, $0) })
+        XCTAssertEqual(map[.recent30d]?.files, 1)
+        XCTAssertEqual(map[.days30to90]?.files, 1)
+        XCTAssertEqual(map[.days90to365]?.files, 1)
+        XCTAssertEqual(map[.over1y]?.files, 1)
+        XCTAssertEqual(AgeBucket.over1y.staleDaysFilter, 365)
+        XCTAssertEqual(AgeBucket.days90to365.staleDaysFilter, 90)
+        XCTAssertEqual(AgeBucket.days30to90.staleDaysFilter, 30)
+
+        let legacyJSON = #"{"fileTypes":[],"largeFiles":[]}"#.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(ScanAnalysis.self, from: legacyJSON)
+        XCTAssertTrue(decoded.ageBuckets.isEmpty)
+    }
+
+    func testRecommendationStaleFilterAndStaleEligibleSelection() {
+        let now = Date(timeIntervalSince1970: 1_750_000_000)
+        let oldTs = Int64(now.timeIntervalSince1970) - 120 * 86_400
+        let newTs = Int64(now.timeIntervalSince1970) - 10 * 86_400
+        let recs = [
+            Recommendation(node: .init(path: "/h/Library/Caches/OldEligible", allocated: 300, modifiedAt: oldTs), category: .browser),
+            Recommendation(node: .init(path: "/h/Library/Caches/NewEligible", allocated: 200, modifiedAt: newTs), category: .browser),
+            Recommendation(node: .init(path: "/h/Library/Caches/OldProtected", allocated: 500, protection: [.source], modifiedAt: oldTs), category: .build)
+        ]
+        let staleRows = RecommendationQuery.rows(recs, staleOnly: true, staleDays: 90, referenceDate: now)
+        XCTAssertEqual(staleRows.map(\.id), ["/h/Library/Caches/OldEligible", "/h/Library/Caches/OldProtected"])
+        let eligibleStaleIDs = RecommendationQuery.staleEligibleIDs(recs, days: 90, referenceDate: now)
+        XCTAssertEqual(eligibleStaleIDs, ["/h/Library/Caches/OldEligible"])
+    }
+
+    func testProjectNonCacheUsageSortingAndReportProjectSection() throws {
+        let p1 = ProjectSummary(path: "/work/HeavyCache", markers: ["Cargo.toml"], allocated: 1000, logical: 1000, fileCount: 10, cacheAllocated: 800, cachePaths: ["/work/HeavyCache/target"])
+        let p2 = ProjectSummary(path: "/work/HeavySource", markers: ["Package.swift"], allocated: 700, logical: 700, fileCount: 25, cacheAllocated: 100, cachePaths: ["/work/HeavySource/.build"])
+        XCTAssertEqual(p1.nonCacheAllocated, 200)
+        XCTAssertEqual(p2.nonCacheAllocated, 600)
+        XCTAssertEqual(p1.cacheRatio, 0.8, accuracy: 0.001)
+        XCTAssertEqual(ProjectWorkspaceQuery.rows([p1, p2], sort: .nonCache).map(\.name), ["HeavySource", "HeavyCache"])
+
+        let scan = ScanResult(
+            root: "/work",
+            scannedAt: Date(timeIntervalSince1970: 1_750_000_000),
+            duration: 0.1,
+            allocated: 1700,
+            logical: 1700,
+            files: 35,
+            directories: 4,
+            unreadable: 0,
+            issues: [],
+            nodes: [],
+            recommendations: [],
+            cancelled: false,
+            analysis: ScanAnalysis(fileTypes: [], largeFiles: [], projects: [p1, p2])
+        )
+        let csv = ScanReport.csv(scan, protectedPaths: ["/work/HeavySource"])
+        XCTAssertTrue(csv.contains("\"project\",\"/work/HeavyCache\",\"HeavyCache\",\"directory\",1000,1000,10"))
+        XCTAssertTrue(csv.contains("\"project\",\"/work/HeavySource\",\"HeavySource\",\"directory\",700,700,25,\"user\""))
+    }
+
 }

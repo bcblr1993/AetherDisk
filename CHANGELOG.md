@@ -1,3 +1,10 @@
+## 0.6.0 · 2026-11-07
+
+- 文件类型页新增「文件活跃度与陈旧分布」画像（近 30 天 / 30–90 天 / 90 天–1 年 / 1 年以上未改），单次只读扫描自动统计各时间桶占用与文件数，并支持一键联动筛选对应时间段的大文件。
+- 清理建议页新增交互式缓存类别汇总胶囊、90 天未改陈旧筛选开关与「勾选 90 天未改可检项」快捷动作（严格保持默认不勾选、受保护项目绝不勾选、清理前复核确认并仅移入废纸篓边界）。
+- 工程洞察页新增工程「源码与资产」净占用与构建缓存占比统计，支持按源码与资产排序及一键跳转「概览中查看」；CSV 扫描报告新增 `project` 工程分节导出。
+- 扩充 Xcode 平台支持（`macOS/tvOS/visionOS DeviceSupport`）、全局工具链缓存（`~/Library/Caches/CocoaPods`、`~/.pub-cache`、`~/.sbt/boot`、`~/.ivy2/cache`、`~/.cache/huggingface/hub`、`~/.cache/playwright`）及工程构建缓存（`.angular/cache`、`.astro`、`.vite`、`.tox`、`.nox`、`.kotlin`，均要求真实工程清单佐证）识别规则，工程标志与源码保护同步覆盖 `go.mod`、`composer.json`、`Gemfile`、`mix.exs`、`angular.json`、`tox.ini`。
+
 ## 0.5.0 · 2026-11-05
 
 - 引入 Darwin `getattrlistbulk(2)` 批量目录元数据只读扫描通道（带 `fstatat` 完整回退），大幅减少常规文件扫描系统调用开销，同时严格维持不跟随符号链接、不跨卷与 `du -xsk` 字节级一致性。
