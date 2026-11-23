@@ -15,8 +15,26 @@ public struct BulkEntry: Sendable, Equatable {
     public var isSymlink: Bool { (mode & S_IFMT) == S_IFLNK }
 }
 
+struct InodeKey: Hashable, Sendable {
+    let dev: dev_t
+    let ino: ino_t
+}
+
+@inline(__always)
+func withThreadDiskIOThrottled<T>(_ enabled: Bool, _ body: () throws -> T) rethrows -> T {
+    if enabled {
+        _ = setiopolicy_np(IOPOL_TYPE_DISK, IOPOL_SCOPE_THREAD, IOPOL_THROTTLE)
+    }
+    defer {
+        if enabled {
+            _ = setiopolicy_np(IOPOL_TYPE_DISK, IOPOL_SCOPE_THREAD, IOPOL_DEFAULT)
+        }
+    }
+    return try body()
+}
+
 // Bind traversal to an opened directory, never to a path that can turn into a link.
-struct DirectoryHandle {
+struct DirectoryHandle: Sendable {
     let descriptor: Int32
     init(path: String) throws {
         descriptor = open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)

@@ -105,9 +105,10 @@ public struct ScanAnalysis: Codable, Sendable {
     public var largeFiles: [DiskNode]
     public var projects: [ProjectSummary]
     public var ageBuckets: [AgeBucketUsage]
-    enum CodingKeys: String, CodingKey { case fileTypes, largeFiles, projects, ageBuckets }
-    public init(fileTypes: [FileTypeUsage], largeFiles: [DiskNode], projects: [ProjectSummary] = [], ageBuckets: [AgeBucketUsage] = []) {
-        self.fileTypes = fileTypes; self.largeFiles = largeFiles; self.projects = projects; self.ageBuckets = ageBuckets
+    public var duplicateGroups: [DuplicateSizeGroup]
+    enum CodingKeys: String, CodingKey { case fileTypes, largeFiles, projects, ageBuckets, duplicateGroups }
+    public init(fileTypes: [FileTypeUsage], largeFiles: [DiskNode], projects: [ProjectSummary] = [], ageBuckets: [AgeBucketUsage] = [], duplicateGroups: [DuplicateSizeGroup] = []) {
+        self.fileTypes = fileTypes; self.largeFiles = largeFiles; self.projects = projects; self.ageBuckets = ageBuckets; self.duplicateGroups = duplicateGroups
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -115,6 +116,7 @@ public struct ScanAnalysis: Codable, Sendable {
         largeFiles = try c.decode([DiskNode].self, forKey: .largeFiles)
         projects = (try? c.decode([ProjectSummary].self, forKey: .projects)) ?? []
         ageBuckets = (try? c.decode([AgeBucketUsage].self, forKey: .ageBuckets)) ?? []
+        duplicateGroups = (try? c.decode([DuplicateSizeGroup].self, forKey: .duplicateGroups)) ?? []
     }
 }
 public enum SizeBasis: String, CaseIterable, Sendable, Identifiable {
@@ -258,13 +260,25 @@ public enum HierarchyBrowser {
         return items.reversed()
     }
 }
-// Kept separate from the directory display budget: metadata beyond 20,000 nodes still contributes.
+struct DuplicateBucketKey: Hashable, Sendable {
+    let logicalSize: Int64
+    let ext: String
+}
+
+// Kept separate from the directory display budget: metadata beyond 40,000 nodes still contributes.
 struct AnalysisAccumulator {
+    static let maxTopLargePerBasis = 200
+    static let maxDuplicateBucketFiles = 20
+    static let maxDuplicateBuckets = 50_000
+    static let maxDuplicateGroupsOutput = 100
+
     var types: [FileCategory: FileTypeUsage] = [:]
     var extMap: [FileCategory: [String: ExtensionUsage]] = [:]
     var ageMap: [AgeBucket: AgeBucketUsage] = [:]
     var physical: [DiskNode] = []; var logical: [DiskNode] = []
     var physicalFloor: Int64 = 0; var logicalFloor: Int64 = 0
+    var duplicateBuckets: [DuplicateBucketKey: [DiskNode]] = [:]
+
     mutating func record(_ node: DiskNode) {
         let category = FileCategory.classify(node.name, allocated: node.allocated)
         var usage = types[category] ?? .init(category: category)
@@ -279,17 +293,98 @@ struct AnalysisAccumulator {
         var bUsage = ageMap[bucket] ?? .init(bucket: bucket)
         bUsage.allocated += node.allocated; bUsage.logical += node.logical; bUsage.files += 1
         ageMap[bucket] = bUsage
-        if node.allocated >= 1024 * 1024 && (physical.count < 200 || node.allocated >= physicalFloor) {
+        if node.allocated >= 1024 * 1024 && (physical.count < Self.maxTopLargePerBasis || node.allocated >= physicalFloor) {
             physical.append(node)
-            if physical.count >= 400 { physical.sort { $0.allocated > $1.allocated }; physical = Array(physical.prefix(200)); physicalFloor = physical.last?.allocated ?? 0 }
+            if physical.count >= Self.maxTopLargePerBasis * 2 {
+                physical.sort { $0.allocated == $1.allocated ? $0.path < $1.path : $0.allocated > $1.allocated }
+                physical = Array(physical.prefix(Self.maxTopLargePerBasis))
+                physicalFloor = physical.last?.allocated ?? 0
+            }
         }
-        if node.logical >= 1024 * 1024 && (logical.count < 200 || node.logical >= logicalFloor) {
+        if node.logical >= 1024 * 1024 && (logical.count < Self.maxTopLargePerBasis || node.logical >= logicalFloor) {
             logical.append(node)
-            if logical.count >= 400 { logical.sort { $0.logical > $1.logical }; logical = Array(logical.prefix(200)); logicalFloor = logical.last?.logical ?? 0 }
+            if logical.count >= Self.maxTopLargePerBasis * 2 {
+                logical.sort { $0.logical == $1.logical ? $0.path < $1.path : $0.logical > $1.logical }
+                logical = Array(logical.prefix(Self.maxTopLargePerBasis))
+                logicalFloor = logical.last?.logical ?? 0
+            }
+        }
+        if node.kind == .file && node.logical >= 1024 * 1024 {
+            let dupKey = DuplicateBucketKey(logicalSize: node.logical, ext: extKey)
+            if var list = duplicateBuckets[dupKey] {
+                if list.count < Self.maxDuplicateBucketFiles {
+                    list.append(node)
+                    duplicateBuckets[dupKey] = list
+                }
+            } else if duplicateBuckets.count < Self.maxDuplicateBuckets {
+                duplicateBuckets[dupKey] = [node]
+            }
         }
     }
+
+    mutating func merge(_ other: AnalysisAccumulator) {
+        for (cat, item) in other.types {
+            var usage = types[cat] ?? .init(category: cat)
+            usage.allocated += item.allocated
+            usage.logical += item.logical
+            usage.files += item.files
+            types[cat] = usage
+        }
+        for (cat, otherExts) in other.extMap {
+            var catExts = extMap[cat] ?? [:]
+            for (extKey, extItem) in otherExts {
+                var extUsage = catExts[extKey] ?? .init(ext: extKey)
+                extUsage.allocated += extItem.allocated
+                extUsage.logical += extItem.logical
+                extUsage.files += extItem.files
+                catExts[extKey] = extUsage
+            }
+            extMap[cat] = catExts
+        }
+        for (bucket, item) in other.ageMap {
+            var bUsage = ageMap[bucket] ?? .init(bucket: bucket)
+            bUsage.allocated += item.allocated
+            bUsage.logical += item.logical
+            bUsage.files += item.files
+            ageMap[bucket] = bUsage
+        }
+        if !other.physical.isEmpty {
+            physical.append(contentsOf: other.physical)
+            if physical.count > Self.maxTopLargePerBasis {
+                physical.sort { $0.allocated == $1.allocated ? $0.path < $1.path : $0.allocated > $1.allocated }
+                physical = Array(physical.prefix(Self.maxTopLargePerBasis))
+                physicalFloor = physical.last?.allocated ?? 0
+            }
+        }
+        if !other.logical.isEmpty {
+            logical.append(contentsOf: other.logical)
+            if logical.count > Self.maxTopLargePerBasis {
+                logical.sort { $0.logical == $1.logical ? $0.path < $1.path : $0.logical > $1.logical }
+                logical = Array(logical.prefix(Self.maxTopLargePerBasis))
+                logicalFloor = logical.last?.logical ?? 0
+            }
+        }
+        for (key, list) in other.duplicateBuckets {
+            if var existing = duplicateBuckets[key] {
+                if existing.count < Self.maxDuplicateBucketFiles {
+                    var seen = Set(existing.map(\.path))
+                    for item in list where !seen.contains(item.path) {
+                        existing.append(item)
+                        seen.insert(item.path)
+                        if existing.count >= Self.maxDuplicateBucketFiles { break }
+                    }
+                    duplicateBuckets[key] = existing
+                }
+            } else if duplicateBuckets.count < Self.maxDuplicateBuckets {
+                duplicateBuckets[key] = list
+            }
+        }
+    }
+
     func result(projects: [ProjectSummary] = []) -> ScanAnalysis {
-        let top = Array(physical.sorted { $0.allocated > $1.allocated }.prefix(200)) + Array(logical.sorted { $0.logical > $1.logical }.prefix(200))
+        let topPhysical = physical.sorted { $0.allocated == $1.allocated ? $0.path < $1.path : $0.allocated > $1.allocated }.prefix(Self.maxTopLargePerBasis)
+        let topLogical = logical.sorted { $0.logical == $1.logical ? $0.path < $1.path : $0.logical > $1.logical }.prefix(Self.maxTopLargePerBasis)
+        let top = Array(topPhysical) + Array(topLogical)
         let unique = Dictionary(top.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
         let enrichedTypes = types.values.map { item -> FileTypeUsage in
             var copy = item
@@ -298,7 +393,32 @@ struct AnalysisAccumulator {
             return copy
         }.sorted { $0.allocated == $1.allocated ? $0.category.rawValue < $1.category.rawValue : $0.allocated > $1.allocated }
         let orderedBuckets = AgeBucket.allCases.map { ageMap[$0] ?? .init(bucket: $0) }
-        return .init(fileTypes: enrichedTypes, largeFiles: unique.values.sorted { $0.allocated == $1.allocated ? $0.path < $1.path : $0.allocated > $1.allocated }, projects: projects, ageBuckets: orderedBuckets)
+        var groups: [DuplicateSizeGroup] = []
+        for (key, list) in duplicateBuckets where list.count >= 2 {
+            let sortedFiles = list.sorted { $0.path < $1.path }
+            let maxAllocated = sortedFiles.map(\.allocated).max() ?? 0
+            let category = FileCategory.classify(sortedFiles[0].name, allocated: maxAllocated)
+            groups.append(DuplicateSizeGroup(logicalSize: key.logicalSize, ext: key.ext, category: category, files: sortedFiles))
+        }
+        let topDuplicates = Array(groups.sorted {
+            if $0.potentialRedundantAllocated != $1.potentialRedundantAllocated {
+                return $0.potentialRedundantAllocated > $1.potentialRedundantAllocated
+            }
+            if $0.totalAllocated != $1.totalAllocated {
+                return $0.totalAllocated > $1.totalAllocated
+            }
+            if $0.logicalSize != $1.logicalSize {
+                return $0.logicalSize > $1.logicalSize
+            }
+            return $0.id < $1.id
+        }.prefix(Self.maxDuplicateGroupsOutput))
+        return .init(
+            fileTypes: enrichedTypes,
+            largeFiles: unique.values.sorted { $0.allocated == $1.allocated ? $0.path < $1.path : $0.allocated > $1.allocated },
+            projects: projects,
+            ageBuckets: orderedBuckets,
+            duplicateGroups: topDuplicates
+        )
     }
 }
 public enum UserProtection {
@@ -362,13 +482,39 @@ public struct ScanCLIOptions: Sendable, Equatable {
     public var csvPath: String?
     public var comparePath: String?
     public var topLimit: Int
+    public var profile: ScanPerformanceProfile
+    public var showDuplicates: Bool
+    public var showVolumes: Bool
+    public var showVersion: Bool
+    public init(
+        rootPath: String = "",
+        jsonPath: String? = nil,
+        csvPath: String? = nil,
+        comparePath: String? = nil,
+        topLimit: Int = 15,
+        profile: ScanPerformanceProfile = .balanced,
+        showDuplicates: Bool = false,
+        showVolumes: Bool = false,
+        showVersion: Bool = false
+    ) {
+        self.rootPath = rootPath
+        self.jsonPath = jsonPath
+        self.csvPath = csvPath
+        self.comparePath = comparePath
+        self.topLimit = topLimit
+        self.profile = profile
+        self.showDuplicates = showDuplicates
+        self.showVolumes = showVolumes
+        self.showVersion = showVersion
+    }
     private static func expand(_ raw: String) -> String {
         NSString(string: raw).expandingTildeInPath
     }
     public static func parse(_ args: [String]) throws -> ScanCLIOptions {
-        guard let first = args.first, !first.hasPrefix("-"), !first.isEmpty else { throw ScanFailure.invalidRoot }
-        var opts = ScanCLIOptions(rootPath: expand(first), jsonPath: nil, csvPath: nil, comparePath: nil, topLimit: 15)
-        var i = 1
+        guard !args.isEmpty else { throw ScanFailure.invalidRoot }
+        var opts = ScanCLIOptions()
+        var hasRoot = false
+        var i = 0
         while i < args.count {
             let flag = args[i]
             if flag == "--json" {
@@ -383,10 +529,23 @@ public struct ScanCLIOptions: Sendable, Equatable {
             } else if flag == "--top" {
                 guard i + 1 < args.count, let n = Int(args[i + 1]), n > 0 else { throw ScanFailure.invalidRoot }
                 opts.topLimit = min(200, n); i += 2
+            } else if flag == "--profile" {
+                guard i + 1 < args.count, let profile = ScanPerformanceProfile(rawValue: args[i + 1]) else { throw ScanFailure.invalidRoot }
+                opts.profile = profile; i += 2
+            } else if flag == "--duplicates" {
+                opts.showDuplicates = true; i += 1
+            } else if flag == "--volumes" {
+                opts.showVolumes = true; i += 1
+            } else if flag == "--version" {
+                opts.showVersion = true; i += 1
+            } else if !flag.hasPrefix("-"), !flag.isEmpty, !hasRoot {
+                opts.rootPath = expand(flag); hasRoot = true; i += 1
             } else {
                 throw ScanFailure.invalidRoot
             }
         }
+        let needsRoot = opts.jsonPath != nil || opts.csvPath != nil || opts.comparePath != nil || opts.showDuplicates || (!opts.showVersion && !opts.showVolumes)
+        guard !needsRoot || hasRoot else { throw ScanFailure.invalidRoot }
         return opts
     }
     public static func formatComparison(current: ScanResult, previous: ScanResult) -> String {

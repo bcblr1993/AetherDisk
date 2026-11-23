@@ -124,3 +124,49 @@ public final class ScanCancellation: @unchecked Sendable {
     public func cancel() { lock.withLock { value = true } }
     public var isCancelled: Bool { lock.withLock { value } }
 }
+public enum ScanPerformanceProfile: String, Codable, CaseIterable, Sendable, Identifiable {
+    case eco, balanced, fast
+    public var id: String { rawValue }
+    public var title: String {
+        switch self {
+        case .eco: "节能低 I/O"
+        case .balanced: "均衡并发"
+        case .fast: "极速并发"
+        }
+    }
+    public var summary: String {
+        switch self {
+        case .eco: "单线程 + 系统磁盘限流，对 SSD 与前台零干扰"
+        case .balanced: "最多 4 路并发 + 系统磁盘限流（推荐）"
+        case .fast: "最多 6 路并发，优先缩短大型目录扫描耗时"
+        }
+    }
+    public var maxConcurrency: Int {
+        switch self {
+        case .eco: 1
+        case .balanced: min(4, max(2, ProcessInfo.processInfo.activeProcessorCount / 2))
+        case .fast: min(6, max(2, ProcessInfo.processInfo.activeProcessorCount))
+        }
+    }
+    public var throttleDiskIO: Bool {
+        switch self {
+        case .eco, .balanced: true
+        case .fast: false
+        }
+    }
+}
+public struct DuplicateSizeGroup: Codable, Sendable, Equatable, Identifiable {
+    public var id: String { "\(logicalSize):\(ext)" }
+    public var logicalSize: Int64
+    public var ext: String
+    public var category: FileCategory
+    public var files: [DiskNode]
+    public var totalAllocated: Int64 { files.reduce(0) { $0 + $1.allocated } }
+    public var potentialRedundantAllocated: Int64 { max(0, totalAllocated - (files.map(\.allocated).max() ?? 0)) }
+    public init(logicalSize: Int64, ext: String, category: FileCategory, files: [DiskNode]) {
+        self.logicalSize = logicalSize
+        self.ext = ext
+        self.category = category
+        self.files = files.sorted { $0.path < $1.path }
+    }
+}

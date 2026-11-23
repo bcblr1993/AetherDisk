@@ -23,6 +23,9 @@ public enum ScanReport {
             row("project", .init(path: proj.path, kind: .directory, allocated: proj.allocated, logical: proj.logical, fileCount: proj.fileCount, protection: proj.protection, modifiedAt: proj.modifiedAt))
         }
         for n in result.analysis?.largeFiles ?? [] { row("large_file", n) }
+        for group in result.analysis?.duplicateGroups ?? [] {
+            for file in group.files { row("duplicate_suspect", file) }
+        }
         for usage in result.analysis?.fileTypes ?? [] {
             row("file_type", .init(path: usage.category.rawValue, kind: .file, allocated: usage.allocated, logical: usage.logical, fileCount: usage.files))
         }
