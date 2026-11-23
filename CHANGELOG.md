@@ -1,3 +1,24 @@
+## 2.0.0 · 2026-11-23
+
+- **多视图交互式空间可视化（`Visualization.swift` & `SunburstView` / `TreemapView` / `MillerColumnsView`）**：概览页新增「旭日图」「树状图」「分栏树」「占比条」四种交互式空间视图，支持「按目录」「按类型」「按陈旧度」「按保护」四种配色语义、受保护节点斜纹标识、点击选中与再次点击目录快速下钻（`⌘↑` 返回上一级）。
+- **磁盘友好三档性能模式与有界并发扫描（`ScanPerformanceProfile` & `Scanner.swift`）**：新增「节能低 I/O」（单线程 + `IOPOL_THROTTLE`）、「均衡并发」（推荐，最多 4 路并发 + `IOPOL_THROTTLE`）与「极速并发」（最多 6 路并发）；仅当根目录直接子目录 $\ge 4$ 个时启用顶层有界并发与线程级磁盘 I/O 限流，采用值类型 `InodeKey` 硬链接去重，常规节点留存预算提升至 `40,000`（缓存池 `400`、深层大目录 `1,500`）。
+- **挂载卷切换、APFS 本地快照透视与废纸篓只读观测（`VolumeSystem.swift`）**：侧边栏新增实时挂载卷切换（外部卷严格限定「仅只读分析」，完全隐藏清理建议与移入废纸篓入口）；概览容量卡新增只读「APFS 本地快照透视」（`tmutil listlocalsnapshots` 只读列举，绝不删除或干预系统快照）、`~/.Trash` 只读占用提示与设置页「完整磁盘访问权限」只读探测。
+- **纯元数据疑似重复大文件线索（`DuplicateSizeGroup`）**：大文件页与 CLI 新增「疑似重复大文件线索」视图，仅依据 $\ge 1\text{ MiB}$ 唯一 inode 文件的 `(逻辑大小, 扩展名)` 归组统计潜在冗余空间，绝对不读取文件内容、不计算文件哈希，也不提供批量删除。
+- **原生体验增强与可视化升级**：新增基于系统 `QLPreviewPanel` 的文件只读「快速预览」（`⌘Y` / 检查器 / 行操作）、窗口文件夹拖放分析（`lstat` 严格拒绝符号链接与单文件）、占用变化页「多快照占用走势图（`SnapshotTrendChart`）」、文件类型与工程洞察比例条。
+- **规则与 CLI 2.0 扩充**：新增 PyTorch / Playwright / Puppeteer / pre-commit / Bazel / Electron / Cypress 工具缓存及 Zig（`.zig-cache`/`zig-out`）、Elixir（`_build`）、CMake（`cmake-build-debug`/`cmake-build-release`）、Rspack（`.rspack_cache`）构建规则（`regular` 清单校验）；`aetherdisk-scan` 新增 `--profile`、`--duplicates`、`--volumes`、`--version`，CSV 新增 `duplicate_suspect` 10 列分节。
+
+## 1.0.2 · 2026-11-07
+
+- **全页面统一交互行组件（`DiskInteractiveRow`）**：统一磁盘概览、清理建议、占用变化、大文件与工程洞察列表行的圆角悬停高亮与整行热区。
+- **工程标识严格校验（`RuleCatalog.projectMarkers(in: [BulkEntry])`）**：要求语言工程清单必须为真实普通文件（`S_IFREG`），`.git` 必须为真实目录或普通文件且绝不为符号链接。
+- **跨页面概览跳转与父级浏览边界收敛（`HierarchyBrowser.resolveNavigationTarget` & `parentScope`）**：支持从「占用变化」「持续增长热点」与「工程洞察」一键定位到概览对应目录，子目录浏览时自动收敛顶层父级按钮避免误触。
+- **跨页勾选缓存净化（`RecommendationQuery.sanitizedSelection`）**：从工程洞察跳转清理建议时重置筛选器并过滤受保护/失效路径。
+
+## 1.0.1 · 2026-11-07
+
+- **全行点击热区与悬停反馈（`DiskSidebarButtonStyle`）**：补全侧边栏与列表行整行点击热区及悬停高亮，支持双击/二次点击目录直接下钻。
+- **多快照尾部连续增长热点识别修复（`ScanTrendAnalyzer.growthHotspots`）**：从最新快照向前统计尾部连续增长轮次与累计增量；CLI 支持 `~/...` 波浪号展开与参数校验。
+
 ## 1.0.0 · 2026-11-07
 
 - **里程碑正式版（1.0.0）**：在严格维持纯元数据只读扫描、不跟随符号链接、不跨卷、不读文件内容与显式二次确认后移入系统废纸篓的基础上，完成空间可视化、趋势预警、APFS 容量透视、本机清理审计账本与 CLI 1.0 体系化闭环。

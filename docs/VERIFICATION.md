@@ -1,31 +1,34 @@
-# AetherDisk 1.0.2 正式发布验收
+# AetherDisk 2.0.0 正式发布验收
 
-日期：2026-11-07（Asia/Shanghai）。版本 1.0.2，构建 2026110704，Apple Silicon、macOS 14+。
+日期：2026-11-23（Asia/Shanghai）。版本 2.0.0，构建 2026112301，Apple Silicon、macOS 14+。
 
 ## 本版改动
 
-- **全页面统一交互行组件（`DiskInteractiveRow`）**：为磁盘概览、清理建议、占用变化、跨目录大文件与工程洞察所有列表行统一提供整行圆角悬停高亮（`onHover`）、选中态高亮与整行点击热区（`.contentShape`）。
-- **工程标识严格校验（`RuleCatalog.projectMarkers(in: [BulkEntry])`）**：修复扫描识别开发工程时未过滤符号链接或同名目录的问题，要求工程清单文件（如 `Package.swift`、`Cargo.toml`、`package.json`）必须为真实普通文件（`S_IFREG`），`.git` 必须为真实目录或普通文件且绝不为符号链接。
-- **跨页面概览跳转与父级浏览边界收敛（`HierarchyBrowser.parentScope` & `resolveNavigationTarget`）**：支持从「占用变化」列表行、「持续增长热点」胶囊与「工程洞察」一键跳转到概览页对应目录层级；子目录内存浏览时自动隐藏顶层「扫描上一级」按钮，避免与「返回上一层浏览」产生误触冲突。
-- **跨页勾选缓存筛选器重置与受保护项净化（`RecommendationQuery.sanitizedSelection`）**：从工程洞察点击「前往清理建议」时自动重置旧筛选条件并过滤已受保护或失效的缓存路径，确保已勾选缓存立即可见。
+- **四种交互式空间分布视图（`Visualization.swift` & `SunburstView` / `TreemapView` / `MillerColumnsView`）**：磁盘概览页新增「旭日图（多环扇区联动）」「树状图（Squarified Treemap）」「分栏树（Miller Columns）」「占比条」切换器（`overview-visual-mode`）与「按目录 / 按类型 / 按陈旧度 / 按保护」四种配色模式（`visual-color-mode`），受保护节点附带斜纹与徽章标识，支持点击选中、二次点击目录快速下钻及 `⌘↑` 返回上一级。
+- **三档磁盘友好扫描策略与有界并发（`ScanPerformanceProfile` & `Scanner.swift`）**：支持「节能低 I/O」（单线程 + `IOPOL_THROTTLE`）、「均衡并发」（推荐，最多 4 路并发 + `IOPOL_THROTTLE`）与「极速并发」（最多 6 路并发）；仅当根目录直接子目录 $\ge 4$ 个时启用顶层有界并发，通过值类型 `InodeKey` 进行硬链接去重，常规节点留存预算升级至 `40,000`（缓存候选 `400`、深层大目录 `1,500`）。
+- **挂载卷切换、APFS 本地快照与废纸篓只读透视（`VolumeSystem.swift`）**：侧边栏新增挂载卷切换（`volume-switcher`），外部卷严格锁定「仅只读分析」并隐藏所有清理入口；概览容量卡支持只读 `tmutil listlocalsnapshots` 快照透视（绝不删除或干预系统快照）、`~/.Trash` 只读大小提示与设置页「完整磁盘访问权限」只读检测。
+- **纯元数据疑似重复大文件线索与原生体验增强**：新增 `DuplicateSizeGroup`（仅按 $\ge 1\text{ MiB}$ 唯一 inode 的逻辑大小与扩展名分组，绝不读取文件内容或计算哈希）、基于原生 `QLPreviewPanel` 的文件只读快速预览（`⌘Y`）、真实文件夹拖放扫描（`lstat` 严格拒绝符号链接与文件）、占用变化页多快照走势图（`SnapshotTrendChart`）及文件类型/工程缓存比例条。
+- **规则与 CLI 2.0 扩充**：新增 PyTorch / Playwright / Puppeteer / pre-commit / Bazel / Electron / Cypress 工具缓存及 Zig（`.zig-cache`/`zig-out`）、Elixir（`_build`）、CMake（`cmake-build-debug`/`cmake-build-release`）、Rspack（`.rspack_cache`）构建规则（`regular` 清单校验）；`aetherdisk-scan` 新增 `--profile`、`--duplicates`、`--volumes`、`--version`，CSV 保持 10 列并新增 `duplicate_suspect` 分节。
 - 清理仍仅在用户显式确认并重新校验后移入系统废纸篓，禁止永久删除或自动清空。
 
 ## 核心与只读扫描
 
-86 项核心测试全部通过，0 失败（采用 TDD 流程新增 3 项单元测试覆盖 `BulkEntry` 工程标识符号链接/非普通文件过滤、面包屑父目录边界与跨页导航解析、清理建议勾选集合安全净化）；Release 编译与打包脚本语法检查通过。
+`swift build --jobs 4 -Xswiftc -warnings-as-errors` 零警告通过；`swift test --jobs 4` 全部 103 项核心测试通过，0 失败（含新增 `Core2Tests` 17 项与 `SafetyAuditTests` 23 项，覆盖三档并发与 `du -xsk` 一致性、`DuplicateSizeGroup`、旭日图/树状图/分栏树几何与命中测试、`VolumeSystem` 只读探测与快照解析、扩充缓存规则、1.0.2 快照兼容解码、CLI 参数解析与静态安全审计）。
 
-最终发行包内 CLI 真实只读扫描 `~/Downloads`：11 个文件、6 个目录、0 个未读取路径、360 KiB（逻辑大小 330 KiB），与 `du -xsk` 一致，耗时约 0.00 秒。不是可释放空间或全系统容量承诺。
+最终发行包内 CLI 真实只读扫描 `~/Downloads`（`aetherdisk-scan ~/Downloads --duplicates --volumes`）：70 个文件、13 个目录、0 个未读取路径、已分配 `2,068,048 KiB`（`2,117,681,152` 字节，逻辑大小 `2,067,874 KiB`），与 `du -xsk ~/Downloads`（`2068048`）精确一致，耗时 `0.00` 秒。不是可释放空间或全系统容量承诺。
 
 ## 签名、公证与安装
 
 Developer ID Application: YanNan Chen (5984KQD4D7)。Sparkle 嵌套组件、框架、CLI 和 App 逐层签名，Hardened Runtime 与时间戳有效。
 
-- App 公证 Accepted：`a7812091-1c6c-49ce-9097-b4d8d5a36fe5`。
-- DMG 公证 Accepted：`aadc0b14-a233-4fa5-a8ff-66f7ecc66ee5`。
-- App 和 DMG 票据已装订并验证，`spctl --assess` 均为 `accepted / source=Notarized Developer ID`。
-- DMG SHA256：`132d17f8483a8a75cf381ff48a989653c8c4eadaaefa067307da1faa992580a9`（长度 `3,757,136` 字节）。
-- 更新包 Ed25519 签名（`Xf1RxMoufL/67X0FTi+s6GNM9pC+otxtL1uCfb85Y0qk1ee+70z9mj241cXvOWb9mUqXUZfB9qJiPsc2K8eYBw==`）和完整签名 Feed（`Mcefg3R1tG1l3oOerL/ZS0LKL3LFYIfr193oweK42Y7QCmbyia11bLsLRFAjaTsoJ6megolsddajZnkPsSWUAg==`，长度 `1142`）用公开 Ed25519 公钥验证成功，同长度篡改包被拒绝。
+- App 公证 Accepted：`64653dee-73d8-4213-a62d-238c307989cf`。
+- DMG 公证 Accepted：`9d53cdc7-c089-4bf2-80cf-f10584d90aa0`。
+- App 和 DMG 票据已装订并验证，`spctl --assess` 均为 `accepted / source=Notarized Developer ID`；只读挂载 `AetherDisk-2.0.0-arm64.dmg` 核对卷名 `AetherDisk 2.0.0`、`Applications` 链接、`安装说明.txt` 与 `Info.plist`（`2.0.0` / `2026112301` / `AetherDiskRelease = true`）后干净卸载。
+- DMG SHA256：`112ac435492092e0363da858ccd7135143af1a2386e57e0cabecfe34e815d7c9`（长度 `4,221,595` 字节）。
+- 更新包 Ed25519 签名（`TWY0vS3vx9znbyt/+b1pkOAIl9t2sRpjzn5u5MzPDjnQ11YbuX8VNqK/de7FC0gvP9T3KTO6vJ8uOHI+VivsCg==`）和完整签名 Feed（`ndIm56f/zC3krz+x11LtfOvXz9p6aBjuXKOEvl6lbNfwlX0b5XKLQwo8AgK5CAjM1sPB66ILF1hv4C8q0wzkDg==`，长度 `1142`）用公开 Ed25519 公钥 `NtKT+Grl0IhrUwpJJb5a4Lulft66JG+GqgUhx25LD2E=` 验证成功，同长度篡改 DMG 与篡改 Feed 均被拒绝。
 
 ## 原生回归与清理收尾
 
-1.0.1、1.0.0、0.6.0、0.5.0、0.4.0 与 0.3.0 验收记录分别保存在 [VERIFICATION-1.0.1.md](VERIFICATION-1.0.1.md)、[VERIFICATION-1.0.0.md](VERIFICATION-1.0.0.md)、[VERIFICATION-0.6.0.md](VERIFICATION-0.6.0.md)、[VERIFICATION-0.5.0.md](VERIFICATION-0.5.0.md)、[VERIFICATION-0.4.0.md](VERIFICATION-0.4.0.md) 与 [VERIFICATION-0.3.0.md](VERIFICATION-0.3.0.md)。
+Tart `macos27` 原生全量回归门禁（`outputs/qa-200/`）全部通过：`vm-function-gate.json`（13/13）、`vm-navigation-gate.json`（8/8）、`021-analysis-gate.json`（14/14）、`ui-style-gate.json`（10/10）、`v050-ui-gate.json`（13/13）与 `v200-ui-gate.json`（14/14）；全套 16 张深浅色截图保存在 `outputs/screenshots/200-release/`，VM 临时测试路径与偏好已清理恢复。
+
+1.0.2、1.0.1、1.0.0、0.6.0、0.5.0、0.4.0 与 0.3.0 验收记录分别保存在 [VERIFICATION-1.0.2.md](VERIFICATION-1.0.2.md)、[VERIFICATION-1.0.1.md](VERIFICATION-1.0.1.md)、[VERIFICATION-1.0.0.md](VERIFICATION-1.0.0.md)、[VERIFICATION-0.6.0.md](VERIFICATION-0.6.0.md)、[VERIFICATION-0.5.0.md](VERIFICATION-0.5.0.md)、[VERIFICATION-0.4.0.md](VERIFICATION-0.4.0.md) 与 [VERIFICATION-0.3.0.md](VERIFICATION-0.3.0.md)。
