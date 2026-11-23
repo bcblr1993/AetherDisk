@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import AetherDiskCore
 
 enum DiskTheme {
     static let filledAccent = Color(light: 0x3A5BD9, dark: 0x506AE0)
@@ -14,6 +15,41 @@ enum DiskTheme {
     static let inset = Color(light: 0xFBFBFD, dark: 0x222227)
     static let line = Color.primary.opacity(0.075)
     static let colors: [Color] = [accent, purple, .teal, .orange, .pink, .cyan, .indigo]
+
+    static func color(
+        forMode mode: VisualizationColorMode,
+        colorIndex: Int,
+        category: FileCategory,
+        ageBucket: AgeBucket,
+        isProtected: Bool,
+        isTail: Bool
+    ) -> Color {
+        if isTail { return Color.secondary.opacity(0.35) }
+        switch mode {
+        case .hierarchy:
+            let safeIndex = colorIndex == Int.min ? 0 : abs(colorIndex)
+            return colors[safeIndex % colors.count]
+        case .fileType:
+            switch category {
+            case .video: return purple
+            case .audio: return .pink
+            case .image: return .teal
+            case .archive: return .orange
+            case .source: return accent
+            case .document: return .cyan
+            case .other: return .indigo
+            }
+        case .age:
+            switch ageBucket {
+            case .recent30d: return accent
+            case .days30to90: return .teal
+            case .days90to365: return .orange
+            case .over1y: return danger
+            }
+        case .protection:
+            return isProtected ? Color.teal : purple
+        }
+    }
 }
 extension Color {
     init(light: UInt32, dark: UInt32) {
