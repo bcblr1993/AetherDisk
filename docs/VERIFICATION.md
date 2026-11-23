@@ -31,4 +31,11 @@ Developer ID Application: YanNan Chen (5984KQD4D7)。Sparkle 嵌套组件、框�
 
 Tart `macos27` 原生全量回归门禁（`outputs/qa-200/`）全部通过：`vm-function-gate.json`（13/13）、`vm-navigation-gate.json`（8/8）、`021-analysis-gate.json`（14/14）、`ui-style-gate.json`（10/10）、`v050-ui-gate.json`（13/13）与 `v200-ui-gate.json`（14/14）；全套 16 张深浅色截图保存在 `outputs/screenshots/200-release/`，VM 临时测试路径与偏好已清理恢复。
 
+1.0.2 (`2026110704`) → 2.0.0 (`2026112301`) 真实 Sparkle 应用内升级端到端验收（Tart `macos27`，证据位于 `outputs/logs/200-upgrade-*`）全部通过：
+
+- 线上官网 Feed `https://aethernative.com/apps/aetherdisk/appcast.xml` 实测 SHA-256 为 `4a3fe04263fbeec71d889fcfbd137d33934eb308aabd1221a47ec872bb42591a`，与本地签名清单逐字节一致。
+- 1.0.2 成功识别更新并完成下载、Ed25519 验签、替换安装与重启为 2.0.0（`2026112301`），升级后主二进制 SHA-256 与正式发行包完全匹配；再次检查更新提示「您使用的就是最新版」。
+- 1.0.2 历史扫描快照、受保护源码与安装包、自动检查更新开关及自定义保护路径（`Developer/Safe/.build`）完整保留；2.0.0 正常加载旧版快照并在「占用变化」「文件类型」页面呈现历史对比与新版分析。
+- 升级验收后 VM 内全部 QA 目录、临时进程、测试缓存与偏好已彻底恢复并同步，`macos27` 已停止。
+
 1.0.2、1.0.1、1.0.0、0.6.0、0.5.0、0.4.0 与 0.3.0 验收记录分别保存在 [VERIFICATION-1.0.2.md](VERIFICATION-1.0.2.md)、[VERIFICATION-1.0.1.md](VERIFICATION-1.0.1.md)、[VERIFICATION-1.0.0.md](VERIFICATION-1.0.0.md)、[VERIFICATION-0.6.0.md](VERIFICATION-0.6.0.md)、[VERIFICATION-0.5.0.md](VERIFICATION-0.5.0.md)、[VERIFICATION-0.4.0.md](VERIFICATION-0.4.0.md) 与 [VERIFICATION-0.3.0.md](VERIFICATION-0.3.0.md)。
