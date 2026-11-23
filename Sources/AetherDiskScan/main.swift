@@ -13,8 +13,13 @@ do {
         exit(0)
     }
     if options.showVolumes {
-        // 待与 VolumeSystem.swift 合并后接通 VolumeDiscovery.mountedVolumes()
-        print("卷信息发现（--volumes）等待与 VolumeSystem.swift 合并后接通 VolumeDiscovery.mountedVolumes()。")
+        let volumes = VolumeDiscovery.mountedVolumes()
+        print("已挂载卷（只读视图，共 \(volumes.count) 个）：")
+        for vol in volumes {
+            let role = vol.isExternal ? "外部卷·仅分析" : "内置卷"
+            let ro = vol.isReadOnly ? " · 只读" : ""
+            print("  \(vol.name) [\(vol.fileSystemType), \(role)\(ro)] -> \(vol.path)：可用 \(DiskFormat.bytes(vol.space.free)) / 总计 \(DiskFormat.bytes(vol.space.total))")
+        }
         if options.rootPath.isEmpty { exit(0) }
     }
     let root = URL(fileURLWithPath: options.rootPath).standardizedFileURL
