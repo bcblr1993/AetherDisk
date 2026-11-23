@@ -44,30 +44,103 @@ final class AppUpdater: ObservableObject {
         controller.checkForUpdates(nil)
     }
 }
+
 struct DiskSettings: View {
     @ObservedObject var updater: AppUpdater
     @ObservedObject var model: AppModel
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
-            HStack(spacing: 12) { BrandMark(size: 44); VStack(alignment: .leading, spacing: 5) { Text("AetherDisk").font(.system(size: 21, weight: .semibold)); Text("版本 \(updater.version)").font(.system(size: 12)).foregroundStyle(.secondary) } }
-            Surface { VStack(alignment: .leading, spacing: 15) {
-                PanelTitle(title: "应用内更新")
-                Text(updater.status).font(.system(size: 12)).foregroundStyle(.secondary)
-                Toggle("自动检查更新", isOn: $updater.automatic).disabled(!updater.ready)
-                Text("每日检查一次。发现新版本后由你决定安装，不自动下载，不发送系统概况。").font(.system(size: 11)).foregroundStyle(.secondary).lineSpacing(4)
-                Button("检查更新…") { updater.check() }.buttonStyle(DiskButtonStyle()).disabled(updater.ready && !updater.canCheck)
-            } }
-            Surface { VStack(alignment: .leading, spacing: 12) {
-                PanelTitle(title: "自定义保护", caption: "\(model.protectedPaths.count) / 50")
-                Text("目录仍参与占用统计；清理时保护该目录、其内部文件和包含它的缓存父目录。").font(.system(size: 11)).foregroundStyle(.secondary)
-                ForEach(model.protectedPaths, id: \.self) { path in HStack {
-                    Text(DiskFormat.compactPath(path)).font(.system(size: 11)).lineLimit(2).textSelection(.enabled).help(path)
-                    Spacer(); Button("移除") { model.removeProtection(path) }.buttonStyle(DiskButtonStyle(kind: .quiet)).controlSize(.small).disabled(model.checking).accessibilityLabel("移除保护 " + path)
-                } }
-                Button("添加保护目录…") { model.chooseProtectedFolder() }.buttonStyle(DiskButtonStyle()).disabled(model.checking || model.protectedPaths.count >= 50).accessibilityIdentifier("add-protection")
-            } }
+            HStack(spacing: 12) {
+                BrandMark(size: 44)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("AetherDisk").font(.system(size: 21, weight: .semibold))
+                    Text("版本 \(updater.version)").font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+            }
+            Surface {
+                VStack(alignment: .leading, spacing: 14) {
+                    PanelTitle(title: "扫描策略与磁盘保护")
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("扫描模式").font(.system(size: 12, weight: .medium))
+                        Picker("扫描模式", selection: $model.scanProfile) {
+                            ForEach(ScanPerformanceProfile.allCases) { profile in
+                                Text(profile.title).tag(profile)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .accessibilityIdentifier("scan-profile-picker")
+                        Text(model.scanProfile.summary)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    Divider().opacity(0.6)
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 6) {
+                                Text("完整磁盘访问权限").font(.system(size: 12, weight: .medium))
+                                Tag(
+                                    text: model.fullDiskAccessGranted ? "已授权" : "受限",
+                                    color: model.fullDiskAccessGranted ? .teal : .orange
+                                )
+                            }
+                            Text(model.fullDiskAccessGranted
+                                 ? "可读取受隐私保护目录的只读元数据。"
+                                 : "部分系统或隐私受限目录（如邮件、Safari 数据）可能无法计入扫描。")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("前往系统设置授权…") { model.permissions() }
+                            .buttonStyle(DiskButtonStyle())
+                            .controlSize(.small)
+                    }
+                }
+            }
+            Surface {
+                VStack(alignment: .leading, spacing: 15) {
+                    PanelTitle(title: "应用内更新")
+                    Text(updater.status).font(.system(size: 12)).foregroundStyle(.secondary)
+                    Toggle("自动检查更新", isOn: $updater.automatic).disabled(!updater.ready)
+                    Text("每日检查一次。发现新版本后由你决定安装，不自动下载，不发送系统概况。")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineSpacing(4)
+                    Button("检查更新…") { updater.check() }
+                        .buttonStyle(DiskButtonStyle())
+                        .disabled(updater.ready && !updater.canCheck)
+                }
+            }
+            Surface {
+                VStack(alignment: .leading, spacing: 12) {
+                    PanelTitle(title: "自定义保护", caption: "\(model.protectedPaths.count) / 50")
+                    Text("目录仍参与占用统计；清理时保护该目录、其内部文件和包含它的缓存父目录。")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    ForEach(model.protectedPaths, id: \.self) { path in
+                        HStack {
+                            Text(DiskFormat.compactPath(path)).font(.system(size: 11)).lineLimit(2).textSelection(.enabled).help(path)
+                            Spacer()
+                            Button("移除") { model.removeProtection(path) }
+                                .buttonStyle(DiskButtonStyle(kind: .quiet))
+                                .controlSize(.small)
+                                .disabled(model.checking)
+                                .accessibilityLabel("移除保护 " + path)
+                        }
+                    }
+                    Button("添加保护目录…") { model.chooseProtectedFolder() }
+                        .buttonStyle(DiskButtonStyle())
+                        .disabled(model.checking || model.protectedPaths.count >= 50)
+                        .accessibilityIdentifier("add-protection")
+                }
+            }
             CleanupRiskNotice()
             Label("扫描记录保存在本机，清理前始终需要确认。", systemImage: "lock.shield").font(.system(size: 11)).foregroundStyle(.secondary)
-        }.padding(24).frame(maxWidth: 760, alignment: .leading).frame(maxWidth: .infinity).background(DiskTheme.background).buttonStyle(DiskButtonStyle())
+        }
+        .padding(24)
+        .frame(maxWidth: 760, alignment: .leading)
+        .frame(maxWidth: .infinity)
+        .background(DiskTheme.background)
+        .buttonStyle(DiskButtonStyle())
     }
 }

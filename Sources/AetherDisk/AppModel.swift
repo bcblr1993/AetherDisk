@@ -1,8 +1,24 @@
 import SwiftUI
 import AppKit
+import Darwin
 import CryptoKit
 import UniformTypeIdentifiers
 import AetherDiskCore
+
+enum OverviewVisualMode: String, CaseIterable, Sendable, Identifiable {
+    case sunburst, treemap, columns, bar
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .sunburst: "旭日图"
+        case .treemap: "树状图"
+        case .columns: "分栏树"
+        case .bar: "占比条"
+        }
+    }
+}
 
 @MainActor
 final class AppModel: ObservableObject {
@@ -42,14 +58,85 @@ final class AppModel: ObservableObject {
     @Published var checking = false
     @Published var volume = VolumeSpace.read(at: FileManager.default.homeDirectoryForCurrentUser)
     @Published var auditEntries: [CleanupAuditEntry] = CleanupAuditStore().load()
+
+    @Published var overviewVisualMode: OverviewVisualMode = .sunburst
+    @Published var visualColorMode: VisualizationColorMode = .hierarchy
+    @Published var hoveredPath: String?
+    @Published var mountedVolumes: [VolumeDescriptor] = VolumeDiscovery.mountedVolumes()
+    @Published var apfsSnapshots: APFSSnapshotReport?
+    @Published var showSnapshotsSheet = false
+    @Published var trashSummary: TrashSummary?
+    @Published var fullDiskAccessGranted: Bool = FullDiskAccessProbe.isGranted()
+    @Published var showDuplicateSuspects = false
+    @Published var scanProfile: ScanPerformanceProfile = ScanPerformanceProfile(
+        rawValue: UserDefaults.standard.string(forKey: "ScanPerformanceProfile") ?? ""
+    ) ?? .balanced {
+        didSet {
+            UserDefaults.standard.set(scanProfile.rawValue, forKey: "ScanPerformanceProfile")
+        }
+    }
+
     private let auditStore = CleanupAuditStore()
     private var token = ScanCancellation()
     private var generation = UUID()
     private let cleanup = CleanupService()
     private var worker: Task<Void, Never>?
+    private var telemetryTask: Task<Void, Never>?
     private var presentingPanel = false
+
+    init() {
+        refreshSystemTelemetry()
+    }
+
+    var selectedVolume: VolumeDescriptor? {
+        let stdRoot = root.standardizedFileURL.path
+        return mountedVolumes.filter {
+            stdRoot == $0.path || stdRoot.hasPrefix($0.path == "/" ? "/" : $0.path + "/")
+        }.max { $0.path.count < $1.path.count } ?? mountedVolumes.first
+    }
+
+    var isExternalVolume: Bool {
+        selectedVolume?.isExternal == true
+    }
+
+    var currentNodes: [DiskNode] {
+        (result?.nodes ?? progress.rootNodes).map { UserProtection.apply($0, paths: protectedPaths) }
+    }
+
+    var sunburstArcs: [SunburstArc] {
+        SunburstLayout.build(nodes: currentNodes, scopePath: activeScope)
+    }
+
+    var treemapRects: [TreemapRect] {
+        TreemapLayout.squarify(nodes: rows)
+    }
+
+    var millerColumns: [MillerColumn] {
+        ColumnBrowserLayout.columns(
+            root: result?.root ?? root.path,
+            activeScope: activeScope,
+            selectedPath: selectedPath,
+            nodes: result?.nodes ?? progress.rootNodes,
+            sort: rankingSort,
+            protectedPaths: protectedPaths
+        )
+    }
+
+    var duplicateGroups: [DuplicateSizeGroup] {
+        (result?.analysis?.duplicateGroups ?? []).map { group in
+            var copy = group
+            copy.files = group.files.map { UserProtection.apply($0, paths: protectedPaths) }
+            return copy
+        }
+    }
+
     var recommendations: [Recommendation] {
-        (result?.recommendations ?? []).map { r in var value = r; value.node = UserProtection.apply(r.node, paths: protectedPaths); return value }
+        guard !isExternalVolume else { return [] }
+        return (result?.recommendations ?? []).map { r in
+            var value = r
+            value.node = UserProtection.apply(r.node, paths: protectedPaths)
+            return value
+        }
     }
     var filteredRecommendations: [Recommendation] {
         RecommendationQuery.rows(recommendations, filter: suggestionFilter, category: suggestionCategory, query: suggestionQuery, staleOnly: suggestionStaleOnly)
@@ -58,7 +145,7 @@ final class AppModel: ObservableObject {
         RecommendationQuery.staleEligibleIDs(recommendations)
     }
     func selectStaleEligibleCaches() {
-        guard fresh, !scanning, !checking else { return }
+        guard fresh, !scanning, !checking, !isExternalVolume else { return }
         selectedCaches.formUnion(staleEligibleCacheIDs)
     }
     var recommendationCategoryTotals: [(category: CacheCategory, allocated: Int64, count: Int)] {
@@ -73,6 +160,7 @@ final class AppModel: ObservableObject {
         return ProjectWorkspaceQuery.rows(raw, sort: projectSort, query: projectQuery)
     }
     func selectProjectCaches(_ project: ProjectSummary) {
+        guard !isExternalVolume else { return }
         suggestionFilter = .all
         suggestionCategory = nil
         suggestionQuery = ""
@@ -109,11 +197,40 @@ final class AppModel: ObservableObject {
         guard let result else { return }
         let target = path.map { URL(fileURLWithPath: $0).standardizedFileURL.path } ?? result.root
         browsePath = (target == result.root || !target.hasPrefix(result.root == "/" ? "/" : result.root + "/")) ? nil : target
-        query = ""; rankingLimit = 40
+        query = ""; rankingLimit = 40; hoveredPath = nil
         selectedPath = rows.first?.path
+    }
+    func navigateUp() {
+        guard isBrowsingSubfolder else { return }
+        let rootPath = result?.root ?? root.path
+        browse(HierarchyBrowser.parentScope(root: rootPath, current: activeScope))
+    }
+    func drillDownPath(_ path: String) {
+        if HierarchyBrowser.canBrowse(.init(path: path, kind: .directory), in: result) {
+            browse(path)
+        } else {
+            selectedPath = path
+            if let node = currentNodes.first(where: { $0.path == path }), node.kind == .directory, node.fileCount > 0 {
+                message = "该目录暂无已保留的下级节点；可右键选择「扫描此文件夹」将其作为根目录深入分析。"
+            }
+        }
     }
     var largeFiles: [DiskNode] { LargeFileQuery.rows(result?.analysis?.largeFiles ?? [], query: largeQuery, category: largeCategory, minimum: largeMinimum, basis: largeBasis, staleDays: largeStaleDays).map { UserProtection.apply($0, paths: protectedPaths) } }
     func protectedNode(_ node: DiskNode) -> DiskNode { UserProtection.apply(node, paths: protectedPaths) }
+    func isUserProtected(_ path: String) -> Bool {
+        let normalized = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
+        return protectedPaths.contains(normalized) || protectedPaths.contains(path)
+    }
+    func toggleProtection(for path: String) {
+        let normalized = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
+        if protectedPaths.contains(normalized) {
+            removeProtection(normalized)
+        } else if protectedPaths.contains(path) {
+            removeProtection(path)
+        } else {
+            addProtection(path)
+        }
+    }
     func addProtection(_ path: String) {
         guard !checking, protectedPaths.count < 50 else { return }
         let value = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
@@ -180,9 +297,53 @@ final class AppModel: ObservableObject {
         guard let path = block.path, let node = rows.first(where: { $0.path == path }) else { return }
         handleNodeTap(node)
     }
+    func quickLook(_ path: String) {
+        QuickLookController.shared.preview(path: path)
+    }
     func copyPath(_ path: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(path, forType: .string)
+    }
+    @discardableResult
+    func handleDroppedURLs(_ urls: [URL]) -> Bool {
+        guard !checking, let rawURL = urls.first, rawURL.isFileURL else { return false }
+        let nsURL = rawURL as NSURL
+        let fileURL = nsURL.isFileReferenceURL() ? (nsURL.filePathURL ?? rawURL) : rawURL
+        let rawPath = fileURL.path
+        let cleanPath = rawPath.count > 1 && rawPath.hasSuffix("/") ? String(rawPath.dropLast()) : rawPath
+        let candidate = URL(fileURLWithPath: cleanPath).standardizedFileURL
+        var st = stat()
+        guard lstat(candidate.path, &st) == 0,
+              (st.st_mode & S_IFMT) == S_IFDIR,
+              candidate.resolvingSymlinksInPath().path == candidate.path else {
+            message = "请拖入真实文件夹；不支持文件或符号链接。"
+            return false
+        }
+        page = "overview"
+        start(candidate)
+        return true
+    }
+    func refreshSystemTelemetry() {
+        telemetryTask?.cancel()
+        let currentRootPath = root.standardizedFileURL.path
+        telemetryTask = Task { [weak self] in
+            let outcome = await Task.detached(priority: .utility) { () -> (volumes: [VolumeDescriptor], snapshots: APFSSnapshotReport, trash: TrashSummary, fda: Bool) in
+                let volumes = VolumeDiscovery.mountedVolumes()
+                let matched = volumes.filter {
+                    currentRootPath == $0.path || currentRootPath.hasPrefix($0.path == "/" ? "/" : $0.path + "/")
+                }.max { $0.path.count < $1.path.count } ?? volumes.first
+                let volumePath = matched?.path ?? "/"
+                let snapshots = APFSSnapshotInspector.inspect(volumePath: volumePath)
+                let trash = TrashInspector.inspect()
+                let fda = FullDiskAccessProbe.isGranted()
+                return (volumes, snapshots, trash, fda)
+            }.value
+            guard !Task.isCancelled, let self else { return }
+            self.mountedVolumes = outcome.volumes
+            self.apfsSnapshots = outcome.snapshots
+            self.trashSummary = outcome.trash
+            self.fullDiskAccessGranted = outcome.fda
+        }
     }
     var spaceMapBlocks: [SpaceMapBlock] {
         SpaceMapLayout.blocks(for: rows)
@@ -224,7 +385,9 @@ final class AppModel: ObservableObject {
         token.cancel(); worker?.cancel(); token = .init(); let thisToken = token
         generation = UUID(); let id = generation
         root = (url ?? root).standardizedFileURL; let scope = root
-        query = ""; browsePath = nil; rankingLimit = 40; suggestionQuery = ""; suggestionStaleOnly = false; comparisonQuery = ""; plan = nil; showIssues = false
+        let profile = scanProfile
+        mountedVolumes = VolumeDiscovery.mountedVolumes()
+        query = ""; browsePath = nil; hoveredPath = nil; rankingLimit = 40; suggestionQuery = ""; suggestionStaleOnly = false; comparisonQuery = ""; plan = nil; showIssues = false
         volume = .read(at: root); history = loadHistory(root: root); previous = history.first
         result = nil; scanning = true; fresh = false; selectedCaches = []; selectedPath = nil; message = nil; progress = .init()
         let updateHandler: @Sendable (ScanProgress) -> Void = { [weak self] update in
@@ -236,7 +399,7 @@ final class AppModel: ObservableObject {
         worker = Task { [weak self] in
             let outcome = await Task.detached(priority: .utility) { () -> Result<ScanResult, Error> in
                 do {
-                    return .success(try DiskScanner.scan(root: scope, cancellation: thisToken, progress: updateHandler))
+                    return .success(try DiskScanner.scan(root: scope, profile: profile, cancellation: thisToken, progress: updateHandler))
                 } catch { return .failure(error) }
             }.value
             guard let self, self.generation == id else { return }
@@ -249,6 +412,7 @@ final class AppModel: ObservableObject {
             case .failure(let error): self.message = error.localizedDescription
             }
             self.volume = .read(at: scope)
+            self.refreshSystemTelemetry()
         }
     }
     func cancel() { token.cancel() }
@@ -257,7 +421,7 @@ final class AppModel: ObservableObject {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")!)
     }
     func preview(paths: [String]? = nil) {
-        guard fresh && !scanning && !checking else { return }
+        guard fresh && !scanning && !checking && !isExternalVolume else { return }
         let chosen = paths ?? Array(selectedCaches)
         checking = true; message = nil
         Task {
@@ -267,7 +431,7 @@ final class AppModel: ObservableObject {
         }
     }
     func confirm() {
-        guard let plan, fresh, !scanning, !checking else { return }
+        guard let plan, fresh, !scanning, !checking, !isExternalVolume else { return }
         self.plan = nil; checking = true
         Task {
             do {
@@ -277,6 +441,7 @@ final class AppModel: ObservableObject {
                 let text = "已移入废纸篓 \(receipt.moved.count) 项。可用空间变化 \(receipt.freeSpaceChange < 0 ? "−" : "+")\(DiskFormat.bytes(receipt.freeSpaceChange))。清空废纸篓后才会释放文件占用。"
                 message = receipt.failed.isEmpty ? text : text + "\n未完成：" + receipt.failed.joined(separator: "\n")
                 fresh = false; selectedCaches = []; volume = .read(at: root)
+                refreshSystemTelemetry()
             } catch { message = error.localizedDescription }
             checking = false
         }
