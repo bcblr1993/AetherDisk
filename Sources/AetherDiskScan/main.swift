@@ -9,7 +9,7 @@ if args.isEmpty || args.contains("--help") {
 do {
     let options = try ScanCLIOptions.parse(args)
     if options.showVersion {
-        print("aetherdisk-scan 3.0.0")
+        print("aetherdisk-scan 3.1.0")
         exit(0)
     }
     if options.showVolumes {

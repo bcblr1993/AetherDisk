@@ -5,9 +5,22 @@ def check(name,value):
  checks.append({'name':name,'passed':bool(value)});print(name,value,flush=True);(OUT/'021-analysis-gate.json').write_text(json.dumps(checks,ensure_ascii=False,indent=2));assert value,name
 def dump(name):
  s=ax();(OUT/('021-ui-'+name+'.txt')).write_text(s);return s
+def wait_for(token,tries=12):
+ for _ in range(tries):
+  s=ax()
+  if token in s:return s
+  time.sleep(.4)
+ return ax()
 def type_in(identifier,value):
- assert ax('focus',identifier)=='0'
- osa('tell application "System Events"\nkeystroke "a" using command down\n'+('keystroke '+json.dumps(value) if value else 'key code 51')+'\nend tell');time.sleep(.4)
+ for _ in range(3):
+  wait_for(identifier)
+  assert ax('focus',identifier)=='0'
+  osa('tell application "System Events"\ndelay 0.15\nkeystroke "a" using command down\ndelay 0.15\nkey code 51\n'+('delay 0.15\nkeystroke '+json.dumps(value)+'\n' if value else '')+'end tell');time.sleep(.4)
+  s=ax()
+  if value=='':
+   if f'|  | {identifier} |' in s:break
+  elif any(f'| {identifier} |' in line and f'| {value}' in line for line in s.splitlines()):
+   break
 launch(page='large')
 s=dump('large-physical');check('deep physical large file appears and sparse file does not','Movie.mp4' in s and '128 MiB' in s and 'virtual.bin' not in s)
 type_in('large-search','missing-qa');s=dump('empty-search');check('live path search filters results','没有符合' in s)
@@ -21,13 +34,13 @@ press('1 个路径未能读取');s=dump('issues');check('permission sheet expose
 press('设置与应用更新');s=dump('settings')
 protect=ROOT+'/Developer/Safe/.build'
 # Remove the fixture's previous preview setting first; do not clear unrelated protections.
-if 'Developer/Safe/.build' in s:press('移除保护 '+protect)
-press('add-protection');osa('tell application "System Events"\nkeystroke "g" using {command down, shift down}\ndelay 0.3\nkeystroke "'+protect+'"\nkey code 36\nend tell');time.sleep(.8);press('保护此目录');press('nav-suggestions')
+if ('移除保护 '+protect) in s:press('移除保护 '+protect)
+press('add-protection');time.sleep(.5);osa('tell application "System Events"\nkeystroke "g" using {command down, shift down}\ndelay 0.5\nkeystroke "'+protect+'"\ndelay 0.2\nkey code 36\nend tell');time.sleep(.9);press('保护此目录');press('nav-suggestions')
 s=dump('protected');check('native protection folder chooser blocks candidate',s.count('AXCheckBox |  | 选择 .build | 0 |  | 0')==3 and '自定义保护' in s)
 launch(page='suggestions');s=dump('protection-restart');check('custom protection survives restart',s.count('AXCheckBox |  | 选择 .build | 0 |  | 0')==3)
 press('导出扫描报告');s=dump('save-default');check('report save defaults to Documents','Documents' in s or '文稿' in s)
 press('取消');check('export cancellation does not create file',remote('test ! -f '+OWNER+'/disk-report-021-final.csv && echo yes')=='yes')
-press('导出扫描报告');osa('tell application "System Events"\nkeystroke "g" using {command down, shift down}\ndelay 0.3\nkeystroke "'+OWNER+'"\nkey code 36\nend tell');time.sleep(.7)
+press('导出扫描报告');wait_for('saveAsNameTextField');osa('tell application "System Events"\nkeystroke "g" using {command down, shift down}\ndelay 0.6\nkeystroke "'+OWNER+'"\ndelay 0.3\nkey code 36\nend tell');time.sleep(1.0);wait_for('saveAsNameTextField')
 # Let NSSavePanel append the allowed extension even when macOS hides it in the field.
 type_in('saveAsNameTextField','disk-report-021-final');press('保存');time.sleep(.8)
 verified=py('''from pathlib import Path

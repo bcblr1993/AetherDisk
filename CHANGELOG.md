@@ -1,3 +1,10 @@
+## 3.1.0 · 2026-11-25
+
+- **智能护理五维卡片内联快速审阅抽屉（`SmartCareView.swift`）**：将五大护理维度拆分为独立工作台跳转与非嵌套「展开摘要」按钮（`pillar-expand-<id>`），点击可就地展开 `smartcare-pillar-drawer` 覆盖系统清理、安全保护、性能优化、应用管理、空间透镜的只读线索与直达操作，兼容可访问性标识符并一键收起。
+- **空间透镜气泡图交互缩放与悬停聚焦（`BubbleLensView.swift`）**：新增捏合手势（`MagnificationGesture`）与左下角半透明悬浮缩放条（`85%–180%`、`bubble-zoom-out` / `bubble-zoom-reset` / `bubble-zoom-in`、`100%` 一键重置），同步中心缩放绘制/命中坐标、悬停径向连线高亮与双行结构化元数据浮窗，并修复缩放按钮百分比的可访问性暴露。
+- **应用管理未用天数纯元数据透视（`Applications.swift` & `ApplicationsView.swift`）**：新增只读采集应用 `lastUsedAt` 与 `unusedDays(referenceDate:)`，将筛选与排序升级为「久未使用」并在列表徽章与右侧详情面板展示基于系统元数据估算的未活跃天数（严格只读、绝不卸载或删改 `.app` 本体）。
+- **菜单栏实时遥测双波形条与质量基线（`PerformanceAndAssistantViews.swift` & `Core3CleanMyMacTests.swift`）**：为 `MenuBarHealthPopoverView` 新增实时 CPU/内存 `TelemetrySparkline` 波形条（`menubar-telemetry-sparklines`）与 3 秒后台只读刷新循环（QA 环境自动跳过）；`swift build` 零警告、`swift test` 全部 `122/122` 通过、Tart `macos27` 7 道原生界面门禁 `99/99` 通过并产出 `310-release` 全套 31 张深浅色截图。
+
 ## 3.0.0 · 2026-11-25
 
 - **全面对齐 CleanMyMac 5 视觉体系与无障碍平滑动效（`Theme.swift` & `ContentView.swift`）**：重构为内嵌悬浮圆角毛玻璃侧边栏（顶部「智能助手」胶囊 + 严格对齐 CleanMyMac 5 的「智能护理、系统清理、安全保护、性能优化、应用管理、我的杂物、空间透镜」七大核心模块与三大实用工具）、立体高光渐变模块徽章（`ModuleIconBadge`）、十套专属色彩舞台光晕背景（`ModuleStagePalette` & `StageBackground`）、左右双栏欢迎英雄舞台（`ModuleHeroStage`）及无底栏遮挡的悬浮发光圆形主控球（`CircularActionOrbBar`）；新增 `DiskMotion` 统一动效控制，全面适配 `accessibilityReduceTransparency`（实色高对比面板与边框降级）与 `accessibilityReduceMotion`（静默旋转扫描环、呼吸光晕与即时页面切换）。

@@ -200,8 +200,8 @@ struct ApplicationsView: View {
                                             .lineLimit(1)
                                         Tag(text: app.source.title, color: app.source == .appStore ? palette.primary : .secondary)
                                         Tag(text: "本体受保护", color: DiskTheme.teal)
-                                        if app.isStale(days: 90) {
-                                            Tag(text: "90 天未改", color: .orange)
+                                        if let badge = unusedBadge(for: app) {
+                                            Tag(text: badge.0, color: badge.1)
                                         }
                                     }
                                     HStack(spacing: 10) {
@@ -270,9 +270,15 @@ struct ApplicationsView: View {
                     metricLine("应用本体已分配", DiskFormat.bytes(app.bundleAllocated))
                     metricLine("应用逻辑大小", DiskFormat.bytes(app.bundleLogical))
                     metricLine("关联缓存与日志", DiskFormat.bytes(app.associatedAllocated))
-                    if let ts = app.modifiedAt {
-                        metricLine("最近修改", Date(timeIntervalSince1970: TimeInterval(ts)).formatted(date: .abbreviated, time: .omitted))
+                    if let days = app.unusedDays() {
+                        metricLine("元数据估算活跃", days == 0 ? "今日活跃" : "约 \(days) 天未活跃")
                     }
+                    if let ts = app.modifiedAt {
+                        metricLine("本体最近修改", Date(timeIntervalSince1970: TimeInterval(ts)).formatted(date: .abbreviated, time: .omitted))
+                    }
+                    Text("基于文件系统元数据估算，本体严格只读保护。")
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(.tertiary)
 
                     if !app.associatedItems.isEmpty {
                         Divider()
@@ -405,6 +411,17 @@ struct ApplicationsView: View {
                     Divider().opacity(0.55)
                 }
             }
+        }
+    }
+
+    private func unusedBadge(for app: InstalledAppItem) -> (String, Color)? {
+        guard let days = app.unusedDays() else { return nil }
+        if days >= 90 {
+            return ("未活跃 ≥ \(days) 天", .orange)
+        } else if days <= 7 {
+            return ("近 7 天活跃", DiskTheme.teal)
+        } else {
+            return ("约 \(days) 天未活跃", .secondary)
         }
     }
 

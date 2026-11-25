@@ -47,7 +47,7 @@ for entry in CAPTURES:
     stop()
     time.sleep(.3)
     args = [
-        'open', '--env', 'AETHERDISK_QA=1', OWNER + '/AetherDisk.app', '--args',
+        'open', '-n', '--env', 'AETHERDISK_QA=1', OWNER + '/AetherDisk.app', '--args',
         '--qa-root', ROOT, '--qa-page', page, '--appearance', appearance,
         '--qa-output', shots + '/' + name + '.png',
     ]

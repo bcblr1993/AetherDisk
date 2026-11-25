@@ -1186,4 +1186,106 @@ final class Core3CleanMyMacTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(updaterSrc.contains("\"low-space-threshold-picker\""))
         XCTAssertTrue(updaterSrc.contains("LowSpaceThresholdGiB.allCases"))
     }
+
+    // MARK: - 13. Phase 3.1.0 Refinements: App Unused Days, SmartCare Drawer, Bubble Zoom & MenuBar Sparklines
+
+    func testInstalledAppUnusedDaysLastUsedAtAndLegacyJSON() throws {
+        let appsDir = root.appendingPathComponent("Apps310")
+        let staleApp = appsDir.appendingPathComponent("ArchiveViewer.app")
+        let recentApp = appsDir.appendingPathComponent("ActiveEditor.app")
+        let staleCache = home.appendingPathComponent("Library/Caches/ArchiveViewer")
+        let recentCache = home.appendingPathComponent("Library/Caches/ActiveEditor")
+
+        let staleBin = staleApp.appendingPathComponent("Contents/MacOS/ArchiveViewer")
+        let recentBin = recentApp.appendingPathComponent("Contents/MacOS/ActiveEditor")
+        try FileManager.default.createDirectory(at: staleBin.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: recentBin.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: staleCache, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: recentCache, withIntermediateDirectories: true)
+
+        try Data(repeating: 0x01, count: 4096).write(to: staleBin)
+        try Data(repeating: 0x02, count: 4096).write(to: recentBin)
+        try Data(repeating: 0x03, count: 8192).write(to: staleCache.appendingPathComponent("cache.db"))
+        try Data(repeating: 0x04, count: 8192).write(to: recentCache.appendingPathComponent("cache.db"))
+
+        let refTs: Int64 = 1_800_000_000
+        let refDate = Date(timeIntervalSince1970: TimeInterval(refTs))
+        let staleOldTs = refTs - 120 * 86_400
+        let recentBundleOldTs = refTs - 150 * 86_400
+        let recentCacheActiveTs = refTs - 2 * 86_400
+
+        // Apply old timestamps everywhere in staleApp + staleCache
+        for url in [staleBin, staleBin.deletingLastPathComponent(), staleApp.appendingPathComponent("Contents"), staleApp, staleCache.appendingPathComponent("cache.db"), staleCache] {
+            try setTimestamps(url, accessedAt: staleOldTs, modifiedAt: staleOldTs)
+        }
+        // recentApp bundle itself is old (150d), but its associated cache was accessed 2 days ago
+        for url in [recentBin, recentBin.deletingLastPathComponent(), recentApp.appendingPathComponent("Contents"), recentApp] {
+            try setTimestamps(url, accessedAt: recentBundleOldTs, modifiedAt: recentBundleOldTs)
+        }
+        try setTimestamps(recentCache.appendingPathComponent("cache.db"), accessedAt: recentCacheActiveTs, modifiedAt: recentBundleOldTs)
+        try setTimestamps(recentCache, accessedAt: recentCacheActiveTs, modifiedAt: recentBundleOldTs)
+
+        let report = ApplicationInspector.inspect(applicationRoots: [appsDir], home: home)
+        let staleItem = try XCTUnwrap(report.apps.first { $0.name == "ArchiveViewer" })
+        let recentItem = try XCTUnwrap(report.apps.first { $0.name == "ActiveEditor" })
+
+        XCTAssertEqual(staleItem.unusedDays(referenceDate: refDate), 120)
+        XCTAssertTrue(staleItem.isStale(days: 90, referenceDate: refDate))
+        XCTAssertEqual(recentItem.unusedDays(referenceDate: refDate), 2)
+        XCTAssertFalse(recentItem.isStale(days: 90, referenceDate: refDate))
+
+        XCTAssertEqual(AppFilterMode.unused.title, "久未使用")
+        XCTAssertEqual(AppSortMode.stale.title, "久未使用")
+
+        let unusedOnly = ApplicationQuery.filterApps(report.apps, mode: .unused, sort: .stale, query: "", referenceDate: refDate)
+        XCTAssertEqual(unusedOnly.map(\.name), ["ArchiveViewer"])
+
+        let sortedByStale = ApplicationQuery.filterApps(report.apps, mode: .all, sort: .stale, query: "", referenceDate: refDate)
+        XCTAssertEqual(sortedByStale.map(\.name), ["ArchiveViewer", "ActiveEditor"])
+
+        // Legacy JSON decoding without lastUsedAt falls back to modifiedAt
+        let legacyJSON = """
+        {"name":"LegacyApp","path":"/Applications/LegacyApp.app","bundleAllocated":4096,"bundleLogical":4096,"fileCount":1,"modifiedAt":\(staleOldTs),"source":"standalone","associatedItems":[]}
+        """
+        let decoded = try JSONDecoder().decode(InstalledAppItem.self, from: Data(legacyJSON.utf8))
+        XCTAssertNil(decoded.lastUsedAt)
+        XCTAssertEqual(decoded.unusedDays(referenceDate: refDate), 120)
+        XCTAssertTrue(decoded.isStale(days: 90, referenceDate: refDate))
+    }
+
+    func test310StaticSafetyAndUIEnhancementInvariants() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+
+        for rel in [
+            "Sources/AetherDiskCore/Applications.swift",
+            "Sources/AetherDisk/SmartCareView.swift",
+            "Sources/AetherDisk/Visualizations/BubbleLensView.swift",
+            "Sources/AetherDisk/ApplicationsView.swift",
+            "Sources/AetherDisk/PerformanceAndAssistantViews.swift"
+        ] {
+            let src = try String(contentsOf: repoRoot.appendingPathComponent(rel), encoding: .utf8)
+            XCTAssertFalse(src.contains("Data(contentsOf:"), rel)
+            XCTAssertFalse(src.contains("String(contentsOf:"), rel)
+            XCTAssertFalse(src.contains("FileHandle("), rel)
+            XCTAssertFalse(src.contains(".removeItem("), rel)
+            XCTAssertFalse(src.contains(".trashItem("), rel)
+        }
+
+        let smartCareSrc = try String(contentsOf: repoRoot.appendingPathComponent("Sources/AetherDisk/SmartCareView.swift"), encoding: .utf8)
+        XCTAssertTrue(smartCareSrc.contains("\"pillar-expand-\""))
+        XCTAssertTrue(smartCareSrc.contains("\"smartcare-pillar-drawer\""))
+        XCTAssertTrue(smartCareSrc.contains("\"smartcare-drawer-close\""))
+
+        let bubbleSrc = try String(contentsOf: repoRoot.appendingPathComponent("Sources/AetherDisk/Visualizations/BubbleLensView.swift"), encoding: .utf8)
+        XCTAssertTrue(bubbleSrc.contains("\"bubble-zoom-controls\""))
+        XCTAssertTrue(bubbleSrc.contains("\"bubble-zoom-in\""))
+        XCTAssertTrue(bubbleSrc.contains("\"bubble-zoom-out\""))
+        XCTAssertTrue(bubbleSrc.contains("\"bubble-zoom-reset\""))
+
+        let perfSrc = try String(contentsOf: repoRoot.appendingPathComponent("Sources/AetherDisk/PerformanceAndAssistantViews.swift"), encoding: .utf8)
+        XCTAssertTrue(perfSrc.contains("\"menubar-telemetry-sparklines\""))
+    }
 }

@@ -13,10 +13,18 @@ struct BubbleLensView: View {
 
     @State private var hoveredBubbleID: String?
     @State private var lastTapInfo: (path: String, time: Date)?
+    @State private var zoomScale: Double = 1.0
+    @GestureState private var pinchFactor: CGFloat = 1.0
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    private var effectiveZoom: Double {
+        min(1.80, max(0.85, zoomScale * Double(pinchFactor)))
+    }
 
     private func normalizedPoint(location: CGPoint, in size: CGSize) -> (nx: Double, ny: Double, side: Double, ox: Double, oy: Double) {
-        let side = max(80.0, min(size.width, size.height))
+        let side = max(80.0, min(size.width, size.height)) * effectiveZoom
         let ox = (size.width - side) / 2.0
         let oy = (size.height - side) / 2.0
         let nx = (location.x - ox) / side
@@ -36,14 +44,16 @@ struct BubbleLensView: View {
 
     var body: some View {
         GeometryReader { geo in
-            let side = max(80.0, min(geo.size.width, geo.size.height))
+            let scale = effectiveZoom
+            let side = max(80.0, min(geo.size.width, geo.size.height)) * scale
             let ox = (geo.size.width - side) / 2.0
             let oy = (geo.size.height - side) / 2.0
             let hovered = activeHoveredBubble
+            let zoomBindingAnim = DiskMotion.subtle(reduceMotion: reduceMotion)
 
             ZStack(alignment: .topTrailing) {
                 Canvas { context, size in
-                    let s = max(80.0, min(size.width, size.height))
+                    let s = max(80.0, min(size.width, size.height)) * scale
                     let originX = (size.width - s) / 2.0
                     let originY = (size.height - s) / 2.0
                     let center = CGPoint(x: size.width / 2.0, y: size.height / 2.0)
@@ -59,15 +69,20 @@ struct BubbleLensView: View {
                         )
                     }
 
-                    // Connector spokes from hub to primary bubbles
+                    // Connector spokes from hub to primary bubbles (highlighted on hover)
                     if let hub = bubbles.first(where: \.isHub) {
                         let hubPt = CGPoint(x: originX + hub.cx * s, y: originY + hub.cy * s)
                         for b in bubbles where !b.isHub {
                             let bPt = CGPoint(x: originX + b.cx * s, y: originY + b.cy * s)
+                            let isSpokeHovered = hovered?.id == b.id || (hoveredPath != nil && b.path == hoveredPath)
                             var line = Path()
                             line.move(to: hubPt)
                             line.addLine(to: bPt)
-                            context.stroke(line, with: .color(DiskTheme.line.opacity(0.55)), lineWidth: 1)
+                            context.stroke(
+                                line,
+                                with: .color(isSpokeHovered ? DiskTheme.accent.opacity(0.9) : DiskTheme.line.opacity(0.55)),
+                                lineWidth: isSpokeHovered ? 2.2 : 1.0
+                            )
                         }
                     }
 
@@ -189,6 +204,16 @@ struct BubbleLensView: View {
                     }
                 )
 
+                .gesture(
+                    MagnificationGesture()
+                        .updating($pinchFactor) { value, state, _ in
+                            state = value
+                        }
+                        .onEnded { value in
+                            zoomScale = min(1.80, max(0.85, zoomScale * Double(value)))
+                        }
+                )
+
                 // Crisp SwiftUI text overlays centered on sufficiently large bubbles
                 ZStack {
                     ForEach(bubbles) { bubble in
@@ -206,35 +231,104 @@ struct BubbleLensView: View {
                 .allowsHitTesting(false)
 
                 if let hovered, !hovered.isHub {
-                    HStack(spacing: 7) {
-                        if hovered.isProtected {
-                            Image(systemName: "lock.shield.fill")
+                    VStack(alignment: .trailing, spacing: 3) {
+                        HStack(spacing: 7) {
+                            if hovered.isProtected {
+                                Image(systemName: "lock.shield.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(DiskTheme.teal)
+                            }
+                            Text(hovered.title)
+                                .font(.system(size: 11, weight: .semibold))
+                                .lineLimit(1)
+                            Text(DiskFormat.bytes(hovered.allocated))
+                                .font(.system(size: 11, weight: .bold, design: .rounded))
+                                .monospacedDigit()
+                                .foregroundStyle(DiskTheme.accent)
+                            Text(String(format: "%.1f%%", hovered.fraction * 100))
                                 .font(.system(size: 10))
-                                .foregroundStyle(DiskTheme.teal)
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
                         }
-                        Text(hovered.title)
-                            .font(.system(size: 11, weight: .semibold))
-                            .lineLimit(1)
-                        Text(DiskFormat.bytes(hovered.allocated))
-                            .font(.system(size: 11, weight: .bold, design: .rounded))
-                            .monospacedDigit()
-                            .foregroundStyle(DiskTheme.accent)
-                        Text(String(format: "%.1f%%", hovered.fraction * 100))
-                            .font(.system(size: 10))
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
+                        HStack(spacing: 6) {
+                            Tag(text: hovered.isTailGroup ? "长尾归并" : hovered.fileCategory.title, color: DiskTheme.accent)
+                            Text(hovered.isTailGroup ? "已归并尾部小项" : (hovered.isDirectory ? "单击选中 · 双击下钻" : "只读元数据文件"))
+                                .font(.system(size: 9.5))
+                                .foregroundStyle(.secondary)
+                        }
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
+                    .padding(.horizontal, 11)
+                    .padding(.vertical, 7)
                     .background(
-                        DiskTheme.surface.opacity(colorScheme == .dark ? 0.92 : 0.95),
-                        in: Capsule()
+                        reduceTransparency ? DiskTheme.elevatedSurface : DiskTheme.surface.opacity(colorScheme == .dark ? 0.92 : 0.95),
+                        in: RoundedRectangle(cornerRadius: 12, style: .continuous)
                     )
-                    .overlay(Capsule().stroke(DiskTheme.line, lineWidth: 1))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(reduceTransparency ? DiskTheme.strongLine : DiskTheme.line, lineWidth: 1)
+                    )
                     .padding(8)
                     .allowsHitTesting(false)
                 }
+
+                // Bottom-left floating Bubble Lens zoom control strip
+                HStack(spacing: 5) {
+                    Text("缩放")
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("bubble-zoom-controls")
+                    Button {
+                        withAnimation(zoomBindingAnim) {
+                            zoomScale = max(0.85, zoomScale - 0.20)
+                        }
+                    } label: {
+                        Image(systemName: "minus.magnifyingglass")
+                            .font(.system(size: 10.5, weight: .semibold))
+                    }
+                    .buttonStyle(DiskButtonStyle(kind: .quiet))
+                    .disabled(zoomScale <= 0.86)
+                    .accessibilityLabel("缩小气泡图")
+                    .accessibilityIdentifier("bubble-zoom-out")
+
+                    Button("\(Int((zoomScale * 100).rounded()))%") {
+                        withAnimation(zoomBindingAnim) {
+                            zoomScale = 1.0
+                        }
+                    }
+                    .buttonStyle(DiskButtonStyle(kind: .quiet))
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .accessibilityLabel("重置气泡图缩放 \(Int((zoomScale * 100).rounded()))%")
+                    .accessibilityValue("\(Int((zoomScale * 100).rounded()))%")
+                    .help("重置气泡图缩放")
+                    .accessibilityIdentifier("bubble-zoom-reset")
+
+                    Button {
+                        withAnimation(zoomBindingAnim) {
+                            zoomScale = min(1.80, zoomScale + 0.20)
+                        }
+                    } label: {
+                        Image(systemName: "plus.magnifyingglass")
+                            .font(.system(size: 10.5, weight: .semibold))
+                    }
+                    .buttonStyle(DiskButtonStyle(kind: .quiet))
+                    .disabled(zoomScale >= 1.79)
+                    .accessibilityLabel("放大气泡图")
+                    .accessibilityIdentifier("bubble-zoom-in")
+                }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
+                .background(
+                    reduceTransparency
+                        ? AnyShapeStyle(DiskTheme.elevatedSurface)
+                        : AnyShapeStyle(.ultraThinMaterial),
+                    in: Capsule()
+                )
+                .overlay(Capsule().stroke(reduceTransparency ? DiskTheme.strongLine : DiskTheme.line, lineWidth: 1))
+                .padding(8)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
             }
+            .clipped()
         }
     }
 

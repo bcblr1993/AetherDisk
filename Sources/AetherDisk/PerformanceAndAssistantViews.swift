@@ -824,6 +824,8 @@ struct MenuBarHealthPopoverView: View {
                 .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(alertTint.opacity(0.24), lineWidth: 1))
             }
 
+            menuTelemetrySparklineStrip
+
             Divider().opacity(0.6)
 
             HStack(spacing: 8) {
@@ -853,9 +855,73 @@ struct MenuBarHealthPopoverView: View {
         .frame(width: 344)
         .background(DiskTheme.surface)
         .buttonStyle(DiskButtonStyle())
-        .onAppear {
+        .task {
             model.refreshSystemTelemetry()
+            guard ProcessInfo.processInfo.environment["AETHERDISK_QA"] != "1" else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(3))
+                if Task.isCancelled { break }
+                model.refreshSystemTelemetry()
+            }
         }
+    }
+
+    private var menuTelemetrySparklineStrip: some View {
+        let hist = model.telemetryHistory
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("实时性能走势")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("menubar-telemetry-sparklines")
+                Spacer()
+                Text(hist.samples.isEmpty ? "等待采样" : "\(hist.samples.count) 次采样")
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(.tertiary)
+                    .monospacedDigit()
+            }
+            HStack(spacing: 8) {
+                menuSparklineTile(
+                    label: "内存",
+                    series: hist.memorySeries,
+                    avg: hist.averageMemory,
+                    peak: hist.peakMemory,
+                    tint: DiskTheme.teal
+                )
+                menuSparklineTile(
+                    label: "CPU",
+                    series: hist.cpuSeries,
+                    avg: hist.averageCPU,
+                    peak: hist.peakCPU,
+                    tint: DiskTheme.accent
+                )
+            }
+        }
+        .padding(9)
+        .background(DiskTheme.inset, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func menuSparklineTile(
+        label: String,
+        series: [Double],
+        avg: Double,
+        peak: Double,
+        tint: Color
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
+                Text(label)
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("均 \(Int((avg * 100).rounded()))% · 峰 \(Int((peak * 100).rounded()))%")
+                    .font(.system(size: 8.5, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(tint)
+            }
+            TelemetrySparkline(series: series, tint: tint, height: 24)
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private func menuTile(

@@ -26,7 +26,7 @@ public enum AppFilterMode: String, CaseIterable, Sendable, Identifiable {
         switch self {
         case .all: "全部应用"
         case .large: "大型应用"
-        case .unused: "久未更新"
+        case .unused: "久未使用"
         case .withCaches: "含关联缓存"
         case .orphans: "卸载残留线索"
         }
@@ -46,7 +46,7 @@ public enum AppSortMode: String, CaseIterable, Sendable, Identifiable {
         case .totalFootprint: "总占用"
         case .bundleSize: "本体大小"
         case .cacheSize: "关联缓存"
-        case .stale: "久未修改"
+        case .stale: "久未使用"
         }
     }
 }
@@ -83,6 +83,7 @@ public struct InstalledAppItem: Identifiable, Codable, Sendable, Equatable {
     public var bundleLogical: Int64
     public var fileCount: Int
     public var modifiedAt: Int64?
+    public var lastUsedAt: Int64? = nil
     public var source: AppDistributionSource
     public var associatedItems: [AppAssociatedItem]
 
@@ -102,8 +103,14 @@ public struct InstalledAppItem: Identifiable, Codable, Sendable, Equatable {
         bundleAllocated + associatedAllocated
     }
 
+    public func unusedDays(referenceDate: Date = Date()) -> Int? {
+        guard let ts = lastUsedAt ?? modifiedAt else { return nil }
+        let nowTs = Int64(referenceDate.timeIntervalSince1970)
+        return max(0, Int((nowTs - ts) / 86_400))
+    }
+
     public func isStale(days: Int = 90, referenceDate: Date = Date()) -> Bool {
-        guard days > 0, let ts = modifiedAt else { return false }
+        guard days > 0, let ts = lastUsedAt ?? modifiedAt else { return false }
         return ts <= Int64(referenceDate.timeIntervalSince1970) - Int64(days) * 86_400
     }
 
@@ -114,6 +121,7 @@ public struct InstalledAppItem: Identifiable, Codable, Sendable, Equatable {
         bundleLogical: Int64,
         fileCount: Int,
         modifiedAt: Int64?,
+        lastUsedAt: Int64? = nil,
         source: AppDistributionSource,
         associatedItems: [AppAssociatedItem] = []
     ) {
@@ -123,6 +131,7 @@ public struct InstalledAppItem: Identifiable, Codable, Sendable, Equatable {
         self.bundleLogical = bundleLogical
         self.fileCount = fileCount
         self.modifiedAt = modifiedAt
+        self.lastUsedAt = lastUsedAt
         self.source = source
         self.associatedItems = associatedItems
     }
@@ -225,8 +234,8 @@ public enum ApplicationQuery {
                     ? (a.totalFootprint == b.totalFootprint ? a.path < b.path : a.totalFootprint > b.totalFootprint)
                     : a.associatedAllocated > b.associatedAllocated
             case .stale:
-                let ma = a.modifiedAt ?? Int64.max
-                let mb = b.modifiedAt ?? Int64.max
+                let ma = a.lastUsedAt ?? a.modifiedAt ?? Int64.max
+                let mb = b.lastUsedAt ?? b.modifiedAt ?? Int64.max
                 return ma == mb ? a.totalFootprint > b.totalFootprint : ma < mb
             }
         }
@@ -314,9 +323,11 @@ public enum ApplicationInspector {
             let isMAS = hasAppStoreReceiptDirectoryEntry(bundleURL: bundleURL, expectedDevice: summary.device)
 
             var matchedData: [AppAssociatedItem] = []
+            var appLastUsed = maxOptional(summary.accessedAt, summary.modifiedAt)
             if normToken.count >= 3 {
                 for candidate in userDataDirs where matchesAppToken(appNorm: normToken, candidateTokens: candidate.tokens) {
                     claimedDataPaths.insert(candidate.path)
+                    appLastUsed = maxOptional(appLastUsed, maxOptional(candidate.accessedAt, candidate.modifiedAt))
                     matchedData.append(
                         AppAssociatedItem(
                             path: candidate.path,
@@ -338,6 +349,7 @@ public enum ApplicationInspector {
                     bundleLogical: summary.logical,
                     fileCount: summary.files,
                     modifiedAt: summary.modifiedAt,
+                    lastUsedAt: appLastUsed,
                     source: isMAS ? .appStore : .standalone,
                     associatedItems: matchedData
                 )
@@ -391,6 +403,7 @@ public enum ApplicationInspector {
         let logical: Int64
         let files: Int
         let modifiedAt: Int64?
+        let accessedAt: Int64?
         let protection: Set<Protection>
         let restricted: Bool
     }
@@ -400,12 +413,22 @@ public enum ApplicationInspector {
         let category: CacheCategory
         let allocated: Int64
         let modifiedAt: Int64?
+        let accessedAt: Int64?
         let blocked: Bool
         let protectionTitles: [String]
         let tokens: [String]
         let displayToken: String
         let looksLikeReverseDNSAppContainer: Bool
         let isSystemVendor: Bool
+    }
+
+    private static func maxOptional(_ a: Int64?, _ b: Int64?) -> Int64? {
+        switch (a, b) {
+        case (nil, nil): return nil
+        case (let x?, nil): return x
+        case (nil, let y?): return y
+        case (let x?, let y?): return max(x, y)
+        }
     }
 
     private static func normalizeToken(_ text: String) -> String {
@@ -570,6 +593,7 @@ public enum ApplicationInspector {
                         category: category,
                         allocated: measured.allocated,
                         modifiedAt: measured.modifiedAt,
+                        accessedAt: measured.accessedAt,
                         blocked: blocked,
                         protectionTitles: flags.map(\.title).sorted(),
                         tokens: parsed.tokens,
@@ -604,6 +628,7 @@ public enum ApplicationInspector {
         var totalLogical: Int64 = 0
         var totalFiles = 0
         var latestModified: Int64? = Int64(rootStat.st_mtimespec.tv_sec)
+        var latestAccessed: Int64? = Int64(rootStat.st_atimespec.tv_sec)
         var visited = 0
         var seenInodes = Set<InodeIdentity>()
         var protection: Set<Protection> = trackProtection ? RuleCatalog.protection(name: rootURL.lastPathComponent, directory: true) : []
@@ -649,6 +674,9 @@ public enum ApplicationInspector {
                 }
                 let m = entry.modifiedAt
                 latestModified = max(latestModified ?? m, m)
+                if entry.accessedAt > 0 {
+                    latestAccessed = max(latestAccessed ?? entry.accessedAt, entry.accessedAt)
+                }
                 if entry.isRegularFile {
                     totalFiles += 1
                     if trackProtection {
@@ -674,6 +702,10 @@ public enum ApplicationInspector {
                     if fstatat(dirHandle.descriptor, entry.name, &childStat, AT_SYMLINK_NOFOLLOW) == 0,
                        (childStat.st_mode & S_IFMT) == S_IFDIR,
                        childStat.st_dev == device {
+                        let dirA = Int64(childStat.st_atimespec.tv_sec)
+                        if dirA > 0 {
+                            latestAccessed = max(latestAccessed ?? dirA, dirA)
+                        }
                         walk(parentHandle: dirHandle, url: url.appendingPathComponent(entry.name), expectedStat: childStat, depth: depth + 1)
                     }
                 }
@@ -687,6 +719,7 @@ public enum ApplicationInspector {
             logical: totalLogical,
             files: totalFiles,
             modifiedAt: latestModified,
+            accessedAt: latestAccessed,
             protection: protection,
             restricted: restricted
         )

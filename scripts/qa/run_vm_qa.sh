@@ -3,10 +3,14 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT_DIR"
 
-if ! tart list | awk '$2=="macos27" && $NF=="running"{found=1} END{exit !found}'; then
-  nohup tart run macos27 >/tmp/tart-macos27-qa.log 2>&1 &
-  sleep 8
+VM_STARTED_BY_US=0
+if pgrep -fl 'tart run macos27' >/dev/null || tart list | awk '$2=="macos27" && $NF=="running"{found=1} END{exit !found}'; then
+  echo "ERROR: macos27 is already running (owned by another task); refusing to hijack shared VM." >&2
+  exit 2
 fi
+nohup tart run macos27 >/tmp/tart-macos27-qa.log 2>&1 &
+VM_STARTED_BY_US=1
+sleep 8
 export AETHERDISK_VM_IP="${AETHERDISK_VM_IP:-$(tart ip --wait 30 macos27)}"
 export AETHERDISK_QA_ROOT="/Users/chenxu/AetherDisk-Release-QA-20261124"
 export AETHERDISK_QA_OWNER="/Users/chenxu/Applications/AetherDisk-Release-QA-20261124"
@@ -15,12 +19,12 @@ export AETHERDISK_QA_OUT="$ROOT_DIR/outputs/qa-300"
 rm -rf "$AETHERDISK_QA_OUT"
 mkdir -p "$AETHERDISK_QA_OUT"
 
-SSH_OPTS=(-i "$HOME/.ssh/id_ed25519" -o BatchMode=yes -o StrictHostKeyChecking=accept-new)
+SSH_OPTS=(-i "$HOME/.ssh/id_ed25519" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 -o ServerAliveInterval=15)
 REMOTE="chenxu@$AETHERDISK_VM_IP"
 
 echo "[1/6] Preparing isolated QA fixture on $REMOTE..."
 ssh "${SSH_OPTS[@]}" "$REMOTE" "AETHERDISK_QA_ROOT='$AETHERDISK_QA_ROOT' AETHERDISK_QA_OWNER='$AETHERDISK_QA_OWNER' python3 -" <<'PY'
-import os, shutil, signal, subprocess, time
+import os, plistlib, shutil, signal, subprocess, time
 from pathlib import Path
 
 root = Path(os.environ['AETHERDISK_QA_ROOT'])
@@ -57,6 +61,19 @@ owner.mkdir(parents=True)
 
 prefs = Path.home() / 'Library/Preferences/com.aethernative.AetherDisk.plist'
 if prefs.exists():
+    with prefs.open('rb') as f:
+        data = plistlib.load(f)
+    cleaned = False
+    for k, v in list(data.items()):
+        if isinstance(v, list):
+            filtered = [item for item in v if not (isinstance(item, str) and ('AetherDisk-Release-QA-' in item or 'AetherDisk-QA-' in item))]
+            if len(filtered) != len(v):
+                data[k] = filtered
+                cleaned = True
+    if cleaned:
+        with prefs.open('wb') as f:
+            plistlib.dump(data, f, fmt=plistlib.FMT_BINARY)
+        subprocess.run(['defaults', 'import', 'com.aethernative.AetherDisk', str(prefs)], check=False)
     (owner / 'preferences-before.plist').write_bytes(prefs.read_bytes())
 
 for name in ['Safe', 'Source', 'Installer']:
@@ -93,9 +110,10 @@ print('Fixture ready')
 PY
 
 echo "[2/6] Copying AetherDisk.app and compiling AXDriver..."
+ssh "${SSH_OPTS[@]}" "$REMOTE" "rm -rf '$AETHERDISK_QA_OWNER/AetherDisk.app'"
 scp "${SSH_OPTS[@]}" -r "$ROOT_DIR/outputs/AetherDisk.app" "$REMOTE:$AETHERDISK_QA_OWNER/AetherDisk.app"
 scp "${SSH_OPTS[@]}" "$ROOT_DIR/scripts/qa/AXDriver.swift" "$REMOTE:/tmp/AXDriver-20261123.swift"
-ssh "${SSH_OPTS[@]}" "$REMOTE" "swiftc /tmp/AXDriver-20261123.swift -o $AETHERDISK_AX_BIN && rm -f /tmp/AXDriver-20261123.swift"
+ssh "${SSH_OPTS[@]}" "$REMOTE" "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f '$AETHERDISK_QA_OWNER/AetherDisk.app' && swiftc /tmp/AXDriver-20261123.swift -o $AETHERDISK_AX_BIN && rm -f /tmp/AXDriver-20261123.swift"
 
 cleanup_vm() {
     echo "[6/6] Restoring VM state and removing only test-owned paths..."
@@ -128,8 +146,10 @@ prefs = Path.home() / 'Library/Preferences/com.aethernative.AetherDisk.plist'
 backup = Path(owner) / 'preferences-before.plist'
 if backup.exists():
     prefs.write_bytes(backup.read_bytes())
+    subprocess.run(['defaults', 'import', 'com.aethernative.AetherDisk', str(prefs)], check=False)
 elif prefs.exists():
     prefs.unlink()
+    subprocess.run(['defaults', 'delete', 'com.aethernative.AetherDisk'], check=False)
 
 for target in [str(root), str(root / 'Documents'), str(root / 'Empty'), str(root / 'Media')]:
     prefix = hashlib.sha256(target.encode()).digest()[:12].hex()
@@ -149,14 +169,15 @@ if ax.exists():
     ax.unlink()
 print('VM clean complete')
 PY
-    tart stop macos27 >/dev/null 2>&1 || true
+    if [ "$VM_STARTED_BY_US" -eq 1 ]; then
+      tart stop macos27 >/dev/null 2>&1 || true
+    fi
     rm -f /tmp/tart-macos27-qa.log /tmp/tart-macos27-040.log
 }
 trap cleanup_vm EXIT
 
 echo "[3/6] Running existing native UI regression gates..."
-ssh "${SSH_OPTS[@]}" "$REMOTE" "for _ in 1 2 3 4 5; do pgrep -f '$AETHERDISK_QA_OWNER/AetherDisk.app/Contents/MacOS/AetherDisk' >/dev/null || break; pkill -f '$AETHERDISK_QA_OWNER/AetherDisk.app/Contents/MacOS/AetherDisk' >/dev/null 2>&1 || true; sleep 0.5; done; open --env AETHERDISK_QA=1 $AETHERDISK_QA_OWNER/AetherDisk.app --args --qa-root $AETHERDISK_QA_ROOT --qa-page overview"
-sleep 2
+ssh "${SSH_OPTS[@]}" "$REMOTE" "for _ in 1 2 3 4 5; do pgrep -x AetherDisk >/dev/null || break; pkill -x AetherDisk >/dev/null 2>&1 || true; sleep 0.5; done; open -n --env AETHERDISK_QA=1 $AETHERDISK_QA_OWNER/AetherDisk.app --args --qa-root $AETHERDISK_QA_ROOT --qa-page overview; for _ in \$(seq 1 30); do $AETHERDISK_AX_BIN dump 2>/dev/null | grep -q 'nav-suggestions' && break; sleep 0.5; done"
 PYTHONPATH="$ROOT_DIR/scripts/qa" python3 "$ROOT_DIR/scripts/qa/function_gate.py"
 PYTHONPATH="$ROOT_DIR/scripts/qa" python3 "$ROOT_DIR/scripts/qa/navigation_gate.py"
 PYTHONPATH="$ROOT_DIR/scripts/qa" python3 "$ROOT_DIR/scripts/qa/analysis_gate.py"
@@ -314,6 +335,15 @@ s = dump300('smartcare')
 check300('v3.0.0 smartcare displays score ring, 5 pillars and assistant insights',
          'smartcare-score-ring' in s and 'smartcare-pillars' in s and 'smartcare-insights' in s and '五大护理维度' in s)
 
+press('pillar-expand-cleanup')
+s = dump300('smartcare-drawer')
+check300('v3.1.0 smartcare expands pillar quick-review drawer inline',
+         'smartcare-pillar-drawer' in s and '系统清理 · 只读快速审阅' in s and 'smartcare-drawer-close' in s)
+press('smartcare-drawer-close')
+s = ax()
+check300('v3.1.0 smartcare closes pillar quick-review drawer cleanly',
+         'smartcare-pillar-drawer' not in s)
+
 press('assistant-button')
 s = dump300('assistant-sheet')
 check300('v3.0.0 smart assistant opens sheet with diagnostics',
@@ -326,7 +356,15 @@ press('nav-overview')
 press('气泡图')
 s = dump300('space-lens-bubble')
 check300('v3.0.0 space lens switches to interactive bubble-lens-canvas',
-         'bubble-lens-canvas' in s)
+         'bubble-lens-canvas' in s and 'bubble-zoom-controls' in s and 'bubble-zoom-in' in s and 'bubble-zoom-reset' in s)
+press('bubble-zoom-in')
+s = dump300('space-lens-bubble-zoom')
+check300('v3.1.0 space lens bubble map zooms cleanly via floating controls',
+         '120%' in s)
+press('bubble-zoom-reset')
+s = ax()
+check300('v3.1.0 space lens bubble map resets zoom to 100%',
+         '100%' in s)
 press('旭日图')
 
 press('nav-suggestions')
@@ -380,7 +418,7 @@ press('nav-applications')
 time.sleep(1.0)
 s = dump300('applications')
 check300('v3.0.0 applications module displays filter rail and read-only bundle protection',
-         'apps-filter-rail' in s and '已安装应用' in s and '安全边界' in s)
+         'apps-filter-rail' in s and '已安装应用' in s and '安全边界' in s and 'app-filter-unused' in s and '久未使用' in s)
 press('app-filter-orphans')
 s = dump300('applications-orphans')
 check300('v3.0.0 applications module switches to orphaned app data view',
@@ -416,7 +454,7 @@ check300('v3.0.0 settings displays low-space-threshold-picker',
          'low-space-threshold-picker' in s and '低空间阈值提醒' in s)
 PY
 
-echo "[5/6] Capturing light and dark appearance 3.0.0 screenshots..."
-PYTHONPATH="$ROOT_DIR/scripts/qa" python3 "$ROOT_DIR/scripts/qa/capture_release.py" "300-release"
+echo "[5/6] Capturing light and dark appearance 3.1.0 screenshots..."
+PYTHONPATH="$ROOT_DIR/scripts/qa" python3 "$ROOT_DIR/scripts/qa/capture_release.py" "310-release"
 echo '{"status":"passed"}' > "$AETHERDISK_QA_OUT/summary.json"
-echo "All VM QA gates and 3.0.0 light/dark appearance captures succeeded!"
+echo "All VM QA gates and 3.1.0 light/dark appearance captures succeeded!"

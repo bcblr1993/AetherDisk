@@ -1,7 +1,7 @@
 import os,subprocess,json,time,shlex
 from pathlib import Path
 VM_IP=os.environ.get('AETHERDISK_VM_IP','192.168.64.21')
-SSH=['ssh','-i',str(Path.home()/'.ssh/id_ed25519'),'-o','BatchMode=yes','-o','StrictHostKeyChecking=accept-new',f'chenxu@{VM_IP}']
+SSH=['ssh','-i',str(Path.home()/'.ssh/id_ed25519'),'-o','BatchMode=yes','-o','StrictHostKeyChecking=accept-new','-o','ConnectTimeout=15','-o','ServerAliveInterval=15',f'chenxu@{VM_IP}']
 OWNER=os.environ.get('AETHERDISK_QA_OWNER','/Users/chenxu/Applications/AetherDisk-Release-QA-20261024')
 ROOT=os.environ.get('AETHERDISK_QA_ROOT','/Users/chenxu/AetherDisk-Release-QA-20261024')
 AX_BIN=os.environ.get('AETHERDISK_AX_BIN','/tmp/AetherDiskAX-20261024')
@@ -23,9 +23,15 @@ for row in subprocess.check_output(['ps','-axo','pid=,comm='],text=True).splitli
 '''.replace('OWNER',repr(OWNER)))
 def launch(app='AetherDisk.app',page='overview',shot=None):
  stop();time.sleep(.5)
- args=['open','--env','AETHERDISK_QA=1',OWNER+'/'+app,'--args','--qa-root',ROOT,'--qa-page',page]
+ args=['open','-n','--env','AETHERDISK_QA=1',OWNER+'/'+app,'--args','--qa-root',ROOT,'--qa-page',page]
  if shot:args+=['--qa-output',shot]
- remote(' '.join(map(shlex.quote,args)));time.sleep(2)
+ remote(' '.join(map(shlex.quote,args)))
+ for _ in range(20):
+  try:
+   out=remote(AX_BIN+' dump')
+   if 'nav-suggestions' in out or 'nav-overview' in out:break
+  except Exception:pass
+  time.sleep(.5)
 def press(target):
  result=ax('press',target)
  assert result=='0' or (result=='-25204' and target in ['选择文件夹','检查更新…','安装并重启应用','导出扫描报告','add-protection']),(target,result)
