@@ -45,5 +45,16 @@ Developer ID Application: YanNan Chen (5984KQD4D7)。Sparkle 嵌套 XPC/Autoupda
 - App 与 DMG 公证票据均已 `stapler staple` 装订与 `stapler validate` 验证通过，`spctl --assess` 均为 `accepted / source=Notarized Developer ID`；只读挂载 `AetherDisk-3.1.0-arm64.dmg` 核对卷名 `AetherDisk 3.1.0`、`Applications` 软链、`安装说明.txt` 与 `Info.plist`（`3.1.0` / `2026112502` / `AetherDiskRelease = True` / `SUFeedURL = https://aethernative.com/apps/aetherdisk/appcast.xml` / `SUPublicEDKey = NtKT+Grl0IhrUwpJJb5a4Lulft66JG+GqgUhx25LD2E=`）后干净卸载。
 - DMG SHA256：`dcd8d82ddfb7f8b3d36418097a1b4dfa983995de78f80b3d01089c187ba95618`（长度 `5,674,613` 字节）。
 - 更新包 Ed25519 签名（`tfQyOGLK8sFpTHcTAjGEJxsxy/x4Mup+sPfpdYrhXEk8oAODtdGqjWvZgugRGZxxoe9Evbf2c2Po+RUyi7l7Bg==`）与完整签名 Feed（`u/JYjWKpQqVx3BBdAJrCObxCTAdCXPeIDcVQ2X5j4DjibiPJz+bzlVjlVGDSKlOLHhmE07O6lNkb88aUIC9qDw==`，长度 `1142`）通过公开 Ed25519 公钥 `NtKT+Grl0IhrUwpJJb5a4Lulft66JG+GqgUhx25LD2E=` 校验通过，且对 DMG 与 Feed 各篡改 1 字节均被拒绝。
+- GitHub Release `v3.1.0`（https://github.com/bcblr1993/AetherDisk/releases/tag/v3.1.0）已发布正式 DMG、源码包（`AetherDisk-3.1.0-source.tar.gz`，`2,080,746` 字节，SHA256 `37fdc51036897f398ecd1dd11ebbcfff8f471ee15f2fb809834df3da2db066e0`）、`SHA256SUMS.txt`、`appcast.xml`、`notarization-app.json` 与 `notarization-dmg.json`，DMG 下载跳转返回 `HTTP/2 302 → 200`。
+
+## 真实 Sparkle 应用内升级验收（3.0.0 → 3.1.0）与发布后清理
+
+3.0.0 (`2026112501`) → 3.1.0 (`2026112502`) 真实 Sparkle 应用内升级端到端验收（Tart `macos27` 干净独立基线，`scripts/qa/upgrade_gate.py`）10 / 10 项全部通过：
+
+- 线上官网 Feed `https://aethernative.com/apps/aetherdisk/appcast.xml`（官网提交 `9d449ec`）实测 SHA-256 为 `164c0e10e0a4b4bb21867fe04901d2bd4528c8c8397712e75cc631b65d3f3a97`，与本地签名清单 `outputs/releases/3.1.0-2026112502/appcast.xml` 逐字节一致。
+- 3.0.0（主二进制 SHA-256 `493b50aa6f4dd682a89adfd9b145dd848e8b134f07e60e267ac01cf746ff88a3`）成功识别更新并完成下载、Ed25519 验签、替换安装与重启为 3.1.0（`2026112502`），升级后主二进制 SHA-256（`44e894a140fe7f3940edd7a4b10eee9a8925fcd1b88668fabf066a86db1ac3cc`）与正式发行包完全匹配；再次检查更新提示「您使用的就是最新版」。
+- 3.0.0 历史扫描快照（`d297a08e0284e453727ead14316c8c7554dd762a10a0ceb4519b9b93039f410b`）、受保护源码与安装包（`429aa948...` / `d008fa5b...`）、自动检查更新开关（`true`）及自定义保护路径（`Developer/Safe/.build`）完整保留；3.1.0 正常加载旧版快照并在「占用变化」「文件类型」页面呈现历史对比与新版分析。
+- 升级验收后 VM 内全部 QA 目录、测试偏好、扫描历史与 LaunchServices 注册均已恢复清理，`macos27` 已停止。
+- 发布收尾后宿主机已按规范逐项核对清理：`.build/`（`301,980 KiB` / `295 MiB`）、`outputs/releases/3.1.0-2026112502/AetherDisk.app` 解包副本（`16,036 KiB` / `16 MiB`）、`outputs/logs/`（`108 KiB`）、`scripts/qa/__pycache__/`（`12 KiB`）及冗余旧版过程截图 `outputs/screenshots/200-release/`（`5,592 KiB`）与 `outputs/screenshots/300-release/`（`39,220 KiB`），合计释放 **`362,948 KiB`（约 `354 MiB`）**，宿主机 `/` 剩余可用空间 **`129 GiB`（`135,744,548 KiB`）**；无残留 DMG 挂载或 `.scan.json`，保留唯一正式公证 `outputs/AetherDisk.app`（`codesign` 与 `spctl` 均通过 `accepted / source=Notarized Developer ID`）、历版正式归档及当前版本正式截图 `outputs/screenshots/310-release/`（31 张）。
 
 历史版本验收记录分别保存在 [VERIFICATION-3.0.0.md](VERIFICATION-3.0.0.md)、[VERIFICATION-2.0.0.md](VERIFICATION-2.0.0.md)、[VERIFICATION-1.0.2.md](VERIFICATION-1.0.2.md)、[VERIFICATION-1.0.1.md](VERIFICATION-1.0.1.md)、[VERIFICATION-1.0.0.md](VERIFICATION-1.0.0.md)、[VERIFICATION-0.6.0.md](VERIFICATION-0.6.0.md)、[VERIFICATION-0.5.0.md](VERIFICATION-0.5.0.md)、[VERIFICATION-0.4.0.md](VERIFICATION-0.4.0.md) 与 [VERIFICATION-0.3.0.md](VERIFICATION-0.3.0.md)。
