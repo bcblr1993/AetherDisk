@@ -18,213 +18,144 @@ struct OverviewView: View {
     }
 
     var body: some View {
-        VStack(spacing: 14) {
-            storageCard
-            HStack(spacing: 12) {
-                metric(
-                    "扫描占用",
-                    model.result.map { DiskFormat.bytes($0.allocated) } ?? (model.scanning ? DiskFormat.bytes(model.progress.allocated) : "尚未扫描"),
-                    "已分配大小",
-                    "square.stack.3d.up",
-                    DiskTheme.accent
-                )
-                if model.isExternalVolume {
-                    metric(
-                        "卷访问模式",
-                        "仅只读分析",
-                        "外部卷不提供清理入口",
-                        "externaldrive.badge.checkmark",
-                        .orange
-                    )
-                } else {
-                    metric(
-                        "可检查缓存",
-                        DiskFormat.bytes(model.eligibleBytes),
-                        "\(model.eligible.count) 项 · 确认后处理",
-                        "sparkles",
-                        DiskTheme.purple
-                    )
-                }
-                metric(
-                    "默认保护",
-                    "\(model.recommendations.filter(\.blocked).count) 项",
-                    "源码、安装包与个人数据",
-                    "lock.shield",
-                    .teal
-                )
+        VStack(spacing: 12) {
+            compactStorageStrip
+
+            if model.scanning {
+                OrbitalScanningBanner(palette: ModuleStagePalette.forPage("overview"), progress: model.progress)
             }
-            if model.scanning { scanStatus }
+
             if model.result == nil && !model.scanning {
-                emptyScan
+                ModuleHeroStage(
+                    palette: ModuleStagePalette.forPage("overview"),
+                    targetPath: DiskFormat.compactPath(model.root.path),
+                    features: [
+                        ("circle.hexagongrid.fill", "左目录树 · 右大幅比例气泡星图双栏同屏联动"),
+                        ("chevron.left.forwardslash.chevron.right", "源码、工程与安装包斜纹光圈自动保护"),
+                        ("eye", "⌘Y 原生 Quick Look 快速预览文件"),
+                        ("lock.fill", "纯元数据读取，零文件内容触碰")
+                    ],
+                    onChooseFolder: { model.chooseFolder() },
+                    onQuickScanHome: { model.start(FileManager.default.homeDirectoryForCurrentUser) }
+                )
             } else {
-                visualizationCard
-                HStack(alignment: .top, spacing: 16) {
-                    rankingCard.frame(maxWidth: .infinity)
-                    VStack(spacing: 16) {
-                        inspector
-                        recommendationSummary
-                    }.frame(width: 260)
+                // CleanMyMac Space Lens Signature Side-by-Side Split Layout
+                HStack(alignment: .top, spacing: 14) {
+                    rankingCard
+                        .frame(width: 344)
+
+                    VStack(spacing: 12) {
+                        visualizationCard
+                        HStack(alignment: .top, spacing: 12) {
+                            inspector
+                                .frame(maxWidth: .infinity)
+                            recommendationSummary
+                                .frame(width: 228)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
                 }
             }
         }
     }
 
-    private var storageCard: some View {
+    private var compactStorageStrip: some View {
         let snapCount = model.apfsSnapshots?.snapshots.count ?? 0
-        return Surface {
-            HStack(spacing: 20) {
+        let palette = ModuleStagePalette.forPage("overview")
+        let usedRatio = model.volume.total > 0 ? CGFloat(model.volume.used) / CGFloat(model.volume.total) : 0
+        let scanValue = model.result.map { DiskFormat.bytes($0.allocated) } ?? (model.scanning ? DiskFormat.bytes(model.progress.allocated) : "待扫描")
+
+        return Surface(padding: 13) {
+            HStack(spacing: 16) {
                 ZStack {
-                    Circle().stroke(DiskTheme.accent.opacity(0.09), lineWidth: 8)
+                    Circle().stroke(palette.primary.opacity(0.14), lineWidth: 6)
                     Circle()
-                        .trim(from: 0, to: model.volume.total > 0 ? CGFloat(model.volume.used) / CGFloat(model.volume.total) : 0)
+                        .trim(from: 0, to: usedRatio)
                         .stroke(
-                            AngularGradient(colors: [DiskTheme.accent, DiskTheme.purple], center: .center, startAngle: .degrees(0), endAngle: .degrees(360)),
-                            style: StrokeStyle(lineWidth: 8, lineCap: .round)
+                            AngularGradient(colors: [palette.primary, palette.secondary, palette.primary], center: .center),
+                            style: StrokeStyle(lineWidth: 6, lineCap: .round)
                         )
                         .rotationEffect(.degrees(-90))
-                    VStack(spacing: 1) {
-                        Text(model.volume.total > 0 ? "\(Int(Double(model.volume.used) / Double(model.volume.total) * 100))%" : "—")
-                            .font(.system(size: 19, weight: .semibold, design: .rounded))
-                        Text("已使用").font(.system(size: 9)).foregroundStyle(.secondary)
+                    Text(model.volume.total > 0 ? "\(Int(Double(usedRatio) * 100))%" : "—")
+                        .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                }
+                .frame(width: 46, height: 46)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 8) {
+                        Text("\(model.selectedVolume?.name ?? "Macintosh HD") · 还有 \(DiskFormat.bytes(model.volume.free)) 可用")
+                            .font(.system(size: 15.5, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                        Text("已用 \(DiskFormat.bytes(model.volume.used)) / 总计 \(DiskFormat.bytes(model.volume.total))")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
                     }
-                }.frame(width: 64, height: 64).padding(4)
-
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(alignment: .center, spacing: 8) {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text("所选位置所在磁盘").font(.system(size: 11)).foregroundStyle(.secondary)
-                            Text("还有 \(DiskFormat.bytes(model.volume.free)) 可用")
-                                .font(.system(size: 22, weight: .semibold, design: .rounded))
-                                .monospacedDigit()
-                        }
-                        Spacer()
-                        Button {
-                            model.showSnapshotsSheet = true
-                        } label: {
-                            Label(snapCount > 0 ? "APFS 本地快照 (\(snapCount))" : "快照透视", systemImage: "camera.aperture")
-                        }
-                        .buttonStyle(DiskButtonStyle(kind: snapCount > 0 ? .secondary : .quiet))
-                        .controlSize(.small)
-                        .foregroundStyle(snapCount > 0 ? Color.orange : Color.secondary)
-                        .accessibilityIdentifier("apfs-snapshots-button")
-
-                        if model.isExternalVolume {
-                            Tag(text: "外部卷 · 仅只读分析", color: .orange)
-                        } else {
-                            Tag(text: "本机实时容量", color: .teal)
-                        }
-                    }
-
                     GeometryReader { g in
                         ZStack(alignment: .leading) {
-                            Capsule().fill(DiskTheme.accent.opacity(0.09))
+                            Capsule().fill(palette.primary.opacity(0.11))
                             Capsule()
-                                .fill(LinearGradient(colors: [DiskTheme.accent, DiskTheme.purple], startPoint: .leading, endPoint: .trailing))
-                                .frame(width: model.volume.total > 0 ? g.size.width * CGFloat(model.volume.used) / CGFloat(model.volume.total) : 0)
-                        }
-                    }.frame(height: 6)
-
-                    HStack {
-                        Text("已用 \(DiskFormat.bytes(model.volume.used))")
-                        Spacer()
-                        Text("总容量 \(DiskFormat.bytes(model.volume.total))")
-                    }
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-
-                    if model.volume.purgeableNote != nil || (model.trashSummary?.readable == true && (model.trashSummary?.allocated ?? 0) > 0) {
-                        HStack(spacing: 12) {
-                            if let purgeable = model.volume.purgeableNote {
-                                Text(purgeable).font(.system(size: 10)).foregroundStyle(.teal)
-                            }
-                            Spacer(minLength: 0)
-                            if let trash = model.trashSummary, trash.readable, trash.allocated > 0 {
-                                Label("废纸篓占 \(DiskFormat.bytes(trash.allocated))（\(trash.itemCount) 项）", systemImage: "trash")
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.secondary)
-                            }
+                                .fill(LinearGradient(colors: [palette.primary, palette.secondary], startPoint: .leading, endPoint: .trailing))
+                                .frame(width: g.size.width * usedRatio)
                         }
                     }
+                    .frame(height: 5)
                 }
+
+                Spacer(minLength: 8)
+
+                // Inline KPI pills
+                HStack(spacing: 8) {
+                    inlineMetricChip(title: "扫描占用", value: scanValue, tint: DiskTheme.accent)
+                    if model.isExternalVolume {
+                        inlineMetricChip(title: "访问模式", value: "仅只读分析", tint: .orange)
+                    } else {
+                        inlineMetricChip(title: "可检查缓存", value: DiskFormat.bytes(model.eligibleBytes), tint: DiskTheme.purple)
+                    }
+                    inlineMetricChip(title: "默认保护", value: "\(model.recommendations.filter(\.blocked).count) 项", tint: DiskTheme.teal)
+                }
+
+                Button {
+                    model.showSnapshotsSheet = true
+                } label: {
+                    Label(snapCount > 0 ? "快照 (\(snapCount))" : "快照透视", systemImage: "camera.aperture")
+                }
+                .buttonStyle(DiskButtonStyle(kind: .secondary))
+                .controlSize(.small)
+                .accessibilityIdentifier("apfs-snapshots-button")
             }
         }
     }
 
-    private func metric(_ title: String, _ value: String, _ caption: String, _ icon: String, _ tint: Color) -> some View {
-        Surface(padding: 12) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: icon)
-                    .font(.system(size: 15))
-                    .foregroundStyle(tint)
-                    .frame(width: 28, height: 28)
-                    .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(title).font(.system(size: 11)).foregroundStyle(.secondary)
-                    Text(value)
-                        .font(.system(size: 20, weight: .semibold, design: .rounded))
-                        .monospacedDigit()
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                    Text(caption).font(.system(size: 9)).foregroundStyle(.tertiary)
-                }
-                Spacer(minLength: 0)
-            }.frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private var scanStatus: some View {
-        HStack(spacing: 12) {
-            ProgressView().controlSize(.small)
-            VStack(alignment: .leading, spacing: 4) {
-                Text("正在扫描 · \(model.progress.files.formatted()) 个文件").font(.system(size: 12, weight: .medium))
-                Text(DiskFormat.compactPath(model.progress.currentPath)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-            }
-            Spacer()
-            Text("可随时停止").font(.system(size: 10)).foregroundStyle(.secondary)
-        }.padding(14).background(DiskTheme.accent.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
-    }
-
-    private var emptyScan: some View {
-        Surface {
-            VStack(spacing: 16) {
-                Image(systemName: "folder.badge.magnifyingglass")
-                    .font(.system(size: 34, weight: .light))
-                    .foregroundStyle(DiskTheme.accent)
-                    .padding(.top, 20)
-                Text("从一个文件夹开始").font(.system(size: 18, weight: .semibold))
-                Text("包含隐藏目录，逐层看清占用。\n扫描不读取文件内容，也不会修改你的文件；支持将文件夹直接拖入窗口分析。")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(5)
-                Button("扫描个人文件夹") { model.start(FileManager.default.homeDirectoryForCurrentUser) }
-                    .buttonStyle(DiskButtonStyle(kind: .primary))
-                HStack(spacing: 24) {
-                    Label("源码保护", systemImage: "chevron.left.forwardslash.chevron.right")
-                    Label("确认后清理", systemImage: "checkmark.shield")
-                    Label("本地处理", systemImage: "lock")
-                }
-                .font(.system(size: 10))
+    private func inlineMetricChip(title: String, value: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.system(size: 9.5))
                 .foregroundStyle(.secondary)
-                .padding(.vertical, 20)
-            }.frame(maxWidth: .infinity)
+            Text(value)
+                .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(tint)
         }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
     }
 
     private var visualizationCard: some View {
         let topArcs = model.sunburstArcs.filter { $0.depth == 1 }
-        return Surface {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 12) {
-                    PanelTitle(title: "空间分布视图", caption: DiskFormat.compactPath(model.activeScope))
+        return Surface(padding: 14) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    PanelTitle(title: "空间透镜视图", caption: DiskFormat.compactPath(model.activeScope))
                     Picker("配色", selection: $model.visualColorMode) {
                         ForEach(VisualizationColorMode.allCases) { mode in
                             Text(mode.title).tag(mode)
                         }
                     }
                     .labelsHidden()
-                    .frame(width: 112)
+                    .frame(width: 104)
                     .disabled(model.overviewVisualMode == .columns)
                     .accessibilityIdentifier("visual-color-mode")
 
@@ -235,13 +166,26 @@ struct OverviewView: View {
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
-                    .frame(width: 248)
+                    .frame(width: 276)
                     .accessibilityIdentifier("overview-visual-mode")
                 }
 
                 switch model.overviewVisualMode {
+                case .bubble:
+                    BubbleLensView(
+                        bubbles: model.bubbleNodes,
+                        canNavigateUp: model.isBrowsingSubfolder,
+                        colorMode: model.visualColorMode,
+                        selectedPath: model.selectedPath,
+                        hoveredPath: $model.hoveredPath,
+                        onSelectPath: { path in model.selectedPath = path },
+                        onDrillDownPath: { path in model.drillDownPath(path) },
+                        onNavigateUp: { model.navigateUp() }
+                    )
+                    .frame(height: 318)
+
                 case .sunburst:
-                    VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 8) {
                         SunburstView(
                             arcs: model.sunburstArcs,
                             scopeTitle: scopeTitle,
@@ -254,7 +198,7 @@ struct OverviewView: View {
                             onDrillDownPath: { path in model.drillDownPath(path) },
                             onNavigateUp: { model.navigateUp() }
                         )
-                        .frame(height: 265)
+                        .frame(height: 286)
 
                         if !topArcs.isEmpty {
                             ScrollView(.horizontal, showsIndicators: false) {
@@ -279,7 +223,7 @@ struct OverviewView: View {
                                             HStack(spacing: 4) {
                                                 Circle().fill(color).frame(width: 6, height: 6)
                                                 if arc.isProtected {
-                                                    Image(systemName: "lock.shield.fill").font(.system(size: 8)).foregroundStyle(.teal)
+                                                    Image(systemName: "lock.shield.fill").font(.system(size: 8)).foregroundStyle(DiskTheme.teal)
                                                 }
                                                 Text("\(arc.title) \(String(format: "%.0f%%", arc.fraction * 100))")
                                                     .font(.system(size: 10))
@@ -308,7 +252,7 @@ struct OverviewView: View {
                         onSelectPath: { path in model.selectedPath = path },
                         onDrillDownPath: { path in model.drillDownPath(path) }
                     )
-                    .frame(height: 265)
+                    .frame(height: 318)
 
                 case .columns:
                     MillerColumnsView(
@@ -331,7 +275,7 @@ struct OverviewView: View {
                             }
                         }
                     )
-                    .frame(height: 275)
+                    .frame(height: 318)
 
                 case .bar:
                     classicSpaceMapBar
@@ -358,14 +302,14 @@ struct OverviewView: View {
                         ForEach(Array(blocks.enumerated()), id: \.element.id) { idx, block in
                             let color = spaceMapColor(block: block, index: idx)
                             RoundedRectangle(cornerRadius: 4)
-                                .fill(color.opacity(0.85))
+                                .fill(color.opacity(0.88))
                                 .frame(width: max(4, available * CGFloat(block.fraction)))
                                 .contentShape(Rectangle())
                                 .help("\(block.title) · \(DiskFormat.bytes(block.allocated)) (\(String(format: "%.1f%%", block.fraction * 100)))")
                                 .onTapGesture { model.handleSpaceMapTap(block) }
                         }
                     }
-                }.frame(height: 14)
+                }.frame(height: 18)
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
@@ -376,7 +320,7 @@ struct OverviewView: View {
                             } label: {
                                 HStack(spacing: 4) {
                                     Circle().fill(color).frame(width: 6, height: 6)
-                                    if block.isProtected { Image(systemName: "lock.shield.fill").font(.system(size: 8)).foregroundStyle(.teal) }
+                                    if block.isProtected { Image(systemName: "lock.shield.fill").font(.system(size: 8)).foregroundStyle(DiskTheme.teal) }
                                     Text("\(block.title) \(String(format: "%.0f%%", block.fraction * 100))").font(.system(size: 10))
                                 }.padding(.horizontal, 6).padding(.vertical, 2).background(DiskTheme.inset, in: Capsule())
                             }.buttonStyle(DiskButtonStyle(kind: .quiet))
@@ -384,7 +328,7 @@ struct OverviewView: View {
                     }
                 }
             }
-            .padding(.vertical, 2)
+            .padding(.vertical, 8)
             .accessibilityIdentifier("space-map")
         }
     }
@@ -413,20 +357,29 @@ struct OverviewView: View {
     }
 
     private var rankingCard: some View {
-        Surface {
-            VStack(alignment: .leading, spacing: 10) {
-                PanelTitle(title: "占用排行", caption: model.rankingSort.title)
-                HStack(spacing: 8) {
-                    DiskSearchField(placeholder: "搜索当前层级", text: $model.query)
-                    Picker("排序", selection: $model.rankingSort) {
-                        ForEach(RankingSort.allCases) { item in Text(item.title).tag(item) }
-                    }.pickerStyle(.segmented).labelsHidden().frame(width: 168).accessibilityIdentifier("ranking-sort")
+        Surface(padding: 13) {
+            VStack(alignment: .leading, spacing: 9) {
+                HStack {
+                    PanelTitle(title: "目录透镜树", caption: model.rankingSort.title)
                     if !model.isBrowsingSubfolder && model.root.path != "/" && model.root != FileManager.default.homeDirectoryForCurrentUser {
-                        Button { model.start(model.root.deletingLastPathComponent()) } label: { Image(systemName: "arrow.up") }.help("扫描上一级")
+                        Button { model.start(model.root.deletingLastPathComponent()) } label: { Image(systemName: "arrow.up") }
+                            .controlSize(.small)
+                            .help("扫描上一级")
+                            .accessibilityLabel("扫描上一级")
                     }
                 }
+
+                DiskSearchField(placeholder: "搜索当前层级", text: $model.query)
+
+                Picker("排序", selection: $model.rankingSort) {
+                    ForEach(RankingSort.allCases) { item in Text(item.title).tag(item) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .accessibilityIdentifier("ranking-sort")
+
                 if model.isBrowsingSubfolder {
-                    HStack(spacing: 6) {
+                    HStack(spacing: 5) {
                         Button { model.navigateUp() } label: { Image(systemName: "chevron.left") }
                             .buttonStyle(DiskButtonStyle(kind: .quiet))
                             .help("返回上一层浏览")
@@ -435,21 +388,31 @@ struct OverviewView: View {
                             HStack(spacing: 4) {
                                 ForEach(Array(model.breadcrumbs.enumerated()), id: \.element.path) { idx, crumb in
                                     if idx > 0 { Image(systemName: "chevron.right").font(.system(size: 8)).foregroundStyle(.tertiary) }
-                                    Button(crumb.name) { model.browse(crumb.path) }.buttonStyle(DiskButtonStyle(kind: .quiet)).font(.system(size: 11))
+                                    Button(crumb.name) { model.browse(crumb.path) }.buttonStyle(DiskButtonStyle(kind: .quiet)).font(.system(size: 10.5))
                                 }
                             }
                         }
                         Spacer(minLength: 0)
-                        Button("回到扫描根目录") { model.browse(nil) }.buttonStyle(DiskButtonStyle(kind: .quiet)).font(.system(size: 10))
-                    }.padding(.horizontal, 8).padding(.vertical, 4).background(DiskTheme.inset, in: RoundedRectangle(cornerRadius: DiskTheme.controlRadius))
+                        Button("回到扫描根目录") { model.browse(nil) }
+                            .buttonStyle(DiskButtonStyle(kind: .quiet))
+                            .font(.system(size: 10))
+                    }
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3.5)
+                    .background(DiskTheme.inset, in: RoundedRectangle(cornerRadius: DiskTheme.controlRadius))
                 }
-                HStack { Text("文件夹 / 文件"); Spacer(); Text("占用 / 比例") }.font(.system(size: 10)).foregroundStyle(.tertiary)
+
+                HStack { Text("文件夹 / 文件"); Spacer(); Text("占用 / 比例") }
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(.tertiary)
+
                 if model.rows.isEmpty {
                     Text(model.scanning ? "正在收集目录…" : "此目录没有可列出的文件，或访问受到限制。")
-                        .font(.system(size: 12))
+                        .font(.system(size: 11.5))
                         .foregroundStyle(.secondary)
-                        .padding(.vertical, 28)
+                        .padding(.vertical, 24)
                 }
+
                 VStack(spacing: 2) {
                     ForEach(Array(model.rows.prefix(model.rankingLimit).enumerated()), id: \.element.id) { index, node in
                         diskRow(node, index: index)
@@ -458,7 +421,7 @@ struct OverviewView: View {
                 if model.rows.count > model.rankingLimit {
                     Button("显示更多（已显示 \(model.rankingLimit) / \(model.rows.count) 项）") { model.rankingLimit += 60 }
                         .buttonStyle(DiskButtonStyle(kind: .quiet))
-                        .font(.system(size: 11))
+                        .font(.system(size: 10.5))
                         .padding(.top, 4)
                         .accessibilityIdentifier("ranking-show-more")
                 }
@@ -471,38 +434,38 @@ struct OverviewView: View {
         let primaryText = model.rankingSort == .logical ? DiskFormat.bytes(node.logical) : DiskFormat.bytes(node.allocated)
         let secondaryText = model.rankingSort == .files ? "\(node.fileCount.formatted()) 文件" : String(format: "%.1f%%", fraction * 100)
         let tint = DiskTheme.colors[index % DiskTheme.colors.count]
-        return DiskInteractiveRow(selected: model.selectedPath == node.path, horizontalPadding: 8, verticalPadding: 5) {
-            HStack(spacing: 10) {
+        return DiskInteractiveRow(selected: model.selectedPath == node.path, horizontalPadding: 7, verticalPadding: 4.5) {
+            HStack(spacing: 8) {
                 Image(systemName: node.kind == .directory ? "folder.fill" : "doc.fill")
-                    .font(.system(size: 15))
+                    .font(.system(size: 13.5))
                     .foregroundStyle(tint)
-                    .frame(width: 28, height: 28)
-                    .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack(spacing: 5) {
-                        Text(node.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                        if node.restricted { Image(systemName: "lock").font(.system(size: 9)).foregroundStyle(.orange) }
-                        if !node.protection.isEmpty { Image(systemName: "lock.shield").font(.system(size: 9)).foregroundStyle(.teal) }
+                    .frame(width: 24, height: 24)
+                    .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 4) {
+                        Text(node.name).font(.system(size: 11.5, weight: .medium)).lineLimit(1)
+                        if node.restricted { Image(systemName: "lock.fill").font(.system(size: 8.5)).foregroundStyle(.orange) }
+                        if !node.protection.isEmpty { Image(systemName: "lock.shield.fill").font(.system(size: 8.5)).foregroundStyle(DiskTheme.teal) }
                     }
                     GeometryReader { g in
-                        Capsule().fill(tint.opacity(0.65)).frame(width: max(2, g.size.width * fraction))
-                    }.frame(height: 3)
+                        Capsule().fill(tint.opacity(0.68)).frame(width: max(2, g.size.width * fraction))
+                    }.frame(height: 2.5)
                 }.frame(maxWidth: .infinity, alignment: .leading)
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text(primaryText).font(.system(size: 12, weight: .medium, design: .rounded)).monospacedDigit()
-                    Text(secondaryText).font(.system(size: 9)).foregroundStyle(.tertiary)
-                }.frame(width: 75, alignment: .trailing)
+                VStack(alignment: .trailing, spacing: 3) {
+                    Text(primaryText).font(.system(size: 11.5, weight: .semibold, design: .rounded)).monospacedDigit()
+                    Text(secondaryText).font(.system(size: 8.5)).foregroundStyle(.tertiary)
+                }.frame(width: 68, alignment: .trailing)
                 if model.canBrowse(node) {
                     Button { model.browse(node.path) } label: {
-                        Image(systemName: "arrow.turn.down.right").font(.system(size: 10)).foregroundStyle(.secondary)
+                        Image(systemName: "arrow.turn.down.right").font(.system(size: 9.5)).foregroundStyle(.secondary)
                     }.buttonStyle(DiskButtonStyle(kind: .quiet)).help("展开 \(node.name)").accessibilityLabel("展开 \(node.name)")
                 }
                 if node.kind == .directory {
                     Button { model.start(URL(fileURLWithPath: node.path)) } label: {
-                        Image(systemName: "chevron.right").font(.system(size: 10)).foregroundStyle(.tertiary)
+                        Image(systemName: "chevron.right").font(.system(size: 9.5)).foregroundStyle(.tertiary)
                     }.buttonStyle(DiskButtonStyle(kind: .quiet)).help("扫描 \(node.name)").accessibilityLabel("扫描 \(node.name)")
                 } else {
-                    Color.clear.frame(width: 6)
+                    Color.clear.frame(width: 4)
                 }
             }
         }
@@ -524,92 +487,116 @@ struct OverviewView: View {
     }
 
     private var inspector: some View {
-        Surface {
-            VStack(alignment: .leading, spacing: 14) {
+        Surface(padding: 13) {
+            VStack(alignment: .leading, spacing: 10) {
                 PanelTitle(title: "所选项目")
                 if let node = model.selectedNode {
-                    Image(systemName: node.kind == .directory ? "folder.fill" : "doc.fill").font(.system(size: 25)).foregroundStyle(DiskTheme.accent)
-                    Text(node.name).font(.system(size: 15, weight: .semibold)).lineLimit(2)
-                    Text(DiskFormat.compactPath(node.path)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(3).truncationMode(.middle).textSelection(.enabled)
-                    Divider()
-                    detail("已分配", DiskFormat.bytes(node.allocated))
-                    detail("逻辑大小", DiskFormat.bytes(node.logical))
-                    detail("文件数", node.fileCount.formatted())
-                    if let sparse = DiskFormat.sparsityNote(allocated: node.allocated, logical: node.logical) { Tag(text: sparse, color: .orange) }
-                    if let ts = node.modifiedAt { detail("最近修改", Date(timeIntervalSince1970: TimeInterval(ts)).formatted(date: .abbreviated, time: .omitted)) }
-                    if let delta = model.delta(node) { detail("较上次", (delta >= 0 ? "+" : "−") + DiskFormat.bytes(delta)) }
-                    if !node.protection.isEmpty {
-                        Text(node.protection.map(\.title).sorted().joined(separator: " · "))
-                            .font(.system(size: 10))
-                            .foregroundStyle(.secondary)
-                            .lineSpacing(4)
-                    }
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 8) {
-                            if model.canBrowse(node) {
-                                Button { model.browse(node.path) } label: { Label("展开此目录", systemImage: "arrow.turn.down.right") }
-                                    .font(.system(size: 11))
-                                    .controlSize(.small)
-                            } else if node.kind == .file {
-                                Button { model.quickLook(node.path) } label: { Label("快速预览", systemImage: "eye") }
-                                    .font(.system(size: 11))
-                                    .controlSize(.small)
-                                    .accessibilityIdentifier("inspector-quicklook")
+                    HStack(spacing: 10) {
+                        ModuleIconBadge(
+                            symbol: node.kind == .directory ? "folder.fill" : "doc.fill",
+                            primary: DiskTheme.accent,
+                            secondary: DiskTheme.purple,
+                            size: 32
+                        )
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 6) {
+                                Text(node.name).font(.system(size: 13.5, weight: .bold, design: .rounded)).lineLimit(1)
+                                if let sparse = DiskFormat.sparsityNote(allocated: node.allocated, logical: node.logical) {
+                                    Tag(text: sparse, color: .orange)
+                                }
                             }
-                            Button { model.reveal(node.path) } label: { Label("在 Finder 中显示", systemImage: "arrow.up.forward.app") }
-                                .font(.system(size: 11))
-                                .controlSize(.small)
+                            Text(DiskFormat.compactPath(node.path))
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .textSelection(.enabled)
                         }
+                        Spacer(minLength: 4)
+                    }
+
+                    HStack(spacing: 16) {
+                        detailPill("已分配", DiskFormat.bytes(node.allocated))
+                        detailPill("逻辑大小", DiskFormat.bytes(node.logical))
+                        detailPill("文件数", node.fileCount.formatted())
+                        if let ts = node.modifiedAt {
+                            detailPill("最近修改", Date(timeIntervalSince1970: TimeInterval(ts)).formatted(date: .abbreviated, time: .omitted))
+                        }
+                    }
+
+                    if !node.protection.isEmpty {
+                        Text("保护标识：" + node.protection.map(\.title).sorted().joined(separator: " · "))
+                            .font(.system(size: 10))
+                            .foregroundStyle(DiskTheme.teal)
+                    }
+
+                    HStack(spacing: 8) {
+                        if model.canBrowse(node) {
+                            Button { model.browse(node.path) } label: { Label("展开此目录", systemImage: "arrow.turn.down.right") }
+                                .controlSize(.small)
+                        } else if node.kind == .file {
+                            Button { model.quickLook(node.path) } label: { Label("快速预览", systemImage: "eye") }
+                                .controlSize(.small)
+                                .accessibilityIdentifier("inspector-quicklook")
+                        }
+                        Button { model.reveal(node.path) } label: { Label("在 Finder 中显示", systemImage: "arrow.up.forward.app") }
+                            .controlSize(.small)
                         if node.kind == .directory {
                             let isProtected = model.isUserProtected(node.path)
                             Button { model.toggleProtection(for: node.path) } label: {
                                 Label(isProtected ? "取消保护" : "保护此目录", systemImage: isProtected ? "lock.slash" : "lock.shield")
                             }
-                            .font(.system(size: 11))
                             .controlSize(.small)
                             .disabled(model.checking)
                             .accessibilityIdentifier("inspector-toggle-protection")
                         }
                     }
                 } else {
-                    Text("选择一项，查看大小和保护状态。")
-                        .font(.system(size: 12))
+                    Text("点击任意气泡、扇区或左侧目录项，查看大小和保护状态。")
+                        .font(.system(size: 11.5))
                         .foregroundStyle(.secondary)
-                        .padding(.vertical, 20)
+                        .padding(.vertical, 14)
                 }
-            }.frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    private func detail(_ label: String, _ value: String) -> some View {
-        HStack { Text(label).foregroundStyle(.secondary); Spacer(); Text(value).monospacedDigit() }.font(.system(size: 11))
+    private func detailPill(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label).font(.system(size: 9.5)).foregroundStyle(.secondary)
+            Text(value).font(.system(size: 11.5, weight: .semibold, design: .rounded)).monospacedDigit()
+        }
     }
 
     private var recommendationSummary: some View {
-        Surface {
-            VStack(alignment: .leading, spacing: 12) {
+        Surface(padding: 13) {
+            VStack(alignment: .leading, spacing: 8) {
                 if model.isExternalVolume {
                     HStack {
                         Image(systemName: "externaldrive.badge.checkmark").foregroundStyle(.orange)
-                        Text("外部卷 · 仅只读分析").font(.system(size: 12, weight: .semibold))
+                        Text("外部卷 · 只读").font(.system(size: 12, weight: .semibold))
                     }
-                    Text("当前所选位置位于外部存储卷，仅提供只读空间统计，不开放清理建议或移入废纸篓操作。")
-                        .font(.system(size: 11))
+                    Text("外部存储卷严格只读分析，不开放任何清理操作。")
+                        .font(.system(size: 10.5))
                         .foregroundStyle(.secondary)
-                        .lineSpacing(4)
                 } else {
-                    HStack { Image(systemName: "sparkles").foregroundStyle(DiskTheme.purple); Text("留一点呼吸空间").font(.system(size: 12, weight: .semibold)) }
-                    Text(model.eligible.isEmpty ? "暂无明确可处理的缓存。重要文件会默认保留。" : "发现 \(model.eligible.count) 项缓存可进一步检查，目录占用约 \(DiskFormat.bytes(model.eligibleBytes))。")
-                        .font(.system(size: 11))
+                    HStack {
+                        Image(systemName: "sparkles").foregroundStyle(DiskTheme.purple)
+                        Text("系统清理快览").font(.system(size: 12, weight: .semibold))
+                    }
+                    Text(model.eligible.isEmpty ? "暂无可处理缓存，核心资产默认保留。" : "发现 \(model.eligible.count) 项可检缓存，约 \(DiskFormat.bytes(model.eligibleBytes))。")
+                        .font(.system(size: 10.5))
                         .foregroundStyle(.secondary)
-                        .lineSpacing(4)
-                    Button("查看清理建议 →") { model.page = "suggestions" }
+                        .lineSpacing(2)
+                    Button("前往系统清理 →") { model.page = "suggestions" }
                         .buttonStyle(DiskButtonStyle(kind: .quiet))
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(DiskTheme.accent)
                     Text("目录占用不等于可释放空间。").font(.system(size: 9)).foregroundStyle(.tertiary)
                 }
-            }.frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }

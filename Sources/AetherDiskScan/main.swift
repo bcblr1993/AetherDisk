@@ -3,13 +3,13 @@ import AetherDiskCore
 
 let args = Array(CommandLine.arguments.dropFirst())
 if args.isEmpty || args.contains("--help") {
-    print("用法：aetherdisk-scan <目录> [--profile eco|balanced|fast] [--json <报告路径>] [--csv <CSV路径>] [--compare <旧快照JSON>] [--top <数量>] [--duplicates] [--volumes] [--version]\n只读扫描；包含隐藏目录、不跨卷、不跟随链接。")
+    print("用法：aetherdisk-scan [<目录>] [--profile eco|balanced|fast] [--json <报告路径>] [--csv <CSV路径>] [--compare <旧快照JSON>] [--top <数量>] [--duplicates] [--volumes] [--apps] [--health] [--cloud] [--version]\n只读扫描；包含隐藏目录、不跨卷、不跟随链接、不读取文件内容。")
     exit(0)
 }
 do {
     let options = try ScanCLIOptions.parse(args)
     if options.showVersion {
-        print("aetherdisk-scan 2.0.0")
+        print("aetherdisk-scan 3.0.0")
         exit(0)
     }
     if options.showVolumes {
@@ -20,7 +20,43 @@ do {
             let ro = vol.isReadOnly ? " · 只读" : ""
             print("  \(vol.name) [\(vol.fileSystemType), \(role)\(ro)] -> \(vol.path)：可用 \(DiskFormat.bytes(vol.space.free)) / 总计 \(DiskFormat.bytes(vol.space.total))")
         }
-        if options.rootPath.isEmpty { exit(0) }
+    }
+    if options.showHealth {
+        let sampler = SystemHealthSampler()
+        let snap = sampler.sample()
+        print("系统健康只读快照（\(snap.hostModelLabel) · \(snap.osVersionLabel)）：")
+        print("  内存：已用 \(DiskFormat.bytes(snap.memory.usedBytes)) / \(DiskFormat.bytes(snap.memory.totalBytes))（\(snap.memory.pressure.title)，压缩 \(DiskFormat.bytes(snap.memory.compressedBytes))）")
+        print("  CPU：负载 \(String(format: "%.2f", snap.cpu.loadAverage1m))（\(snap.cpu.coreCount) 核 · \(snap.cpu.thermalLabel)）")
+        print("  电源：\(snap.power.statusLabel)")
+    }
+    if options.showApps {
+        let report = ApplicationInspector.inspect()
+        print("应用与关联缓存只读透视（共 \(report.apps.count) 款应用，疑似残留 \(report.orphanedData.count) 项）：")
+        for app in report.apps.prefix(options.topLimit) {
+            let cacheInfo = app.associatedAllocated > 0 ? "（含关联缓存 \(DiskFormat.bytes(app.associatedAllocated))）" : ""
+            print("  \(DiskFormat.bytes(app.totalFootprint))\t\(app.name) [\(app.source.title)]\(cacheInfo)")
+        }
+    }
+    if options.showCloud {
+        let extraCloudRoot = options.rootPath.isEmpty ? nil : CloudStorageInspector.candidateExtraCloudRoot(for: URL(fileURLWithPath: options.rootPath))
+        let report = CloudStorageInspector.inspect(extraCloudRoot: extraCloudRoot)
+        print("云盘空间只读透视（共 \(report.providers.count) 个服务 · 本地驻留 \(DiskFormat.bytes(report.totalAllocated)) · 云端占位 \(DiskFormat.bytes(report.totalCloudOnlyLogical)) · 本地文件 \(report.totalLocalFiles) 个 · 占位文件 \(report.totalDatalessFiles) 个）：")
+        if report.providers.isEmpty {
+            print("  未发现本地云盘同步目录（~/Library/CloudStorage 或 iCloud Drive）。")
+        } else {
+            for provider in report.providers {
+                print("  \(provider.name) [\(DiskFormat.compactPath(provider.path))]：本地驻留 \(DiskFormat.bytes(provider.allocated))，云端占位 \(DiskFormat.bytes(provider.cloudOnlyLogical))，逻辑总计 \(DiskFormat.bytes(provider.logical))，本地文件 \(provider.localFileCount) 个，占位文件 \(provider.datalessFileCount) 个\(provider.unreadableCount > 0 ? "，未读取 \(provider.unreadableCount) 项" : "")")
+                for item in provider.topLocalFiles.prefix(3) {
+                    print("    - \(item.name)：本地 \(DiskFormat.bytes(item.allocated)) / 逻辑 \(DiskFormat.bytes(item.logical))")
+                }
+            }
+        }
+        if report.unreadableCount > 0 {
+            print("  提示：部分云盘路径受权限限制，统计可能不完整（未读取 \(report.unreadableCount) 项）。")
+        }
+    }
+    if options.rootPath.isEmpty {
+        exit(0)
     }
     let root = URL(fileURLWithPath: options.rootPath).standardizedFileURL
     let result = try DiskScanner.scan(root: root, profile: options.profile)

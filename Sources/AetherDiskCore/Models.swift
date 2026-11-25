@@ -12,10 +12,11 @@ public struct DiskNode: Identifiable, Codable, Sendable, Equatable {
     public var restricted: Bool
     public var protection: Set<Protection>
     public var modifiedAt: Int64?
+    public var accessedAt: Int64? = nil
     public var name: String { URL(fileURLWithPath: path).lastPathComponent }
     public var parent: String { URL(fileURLWithPath: path).deletingLastPathComponent().path }
-    public init(path: String, kind: ItemKind = .directory, allocated: Int64 = 0, logical: Int64 = 0, fileCount: Int = 0, restricted: Bool = false, protection: Set<Protection> = [], modifiedAt: Int64? = nil) {
-        self.path = path; self.kind = kind; self.allocated = allocated; self.logical = logical; self.fileCount = fileCount; self.restricted = restricted; self.protection = protection; self.modifiedAt = modifiedAt
+    public init(path: String, kind: ItemKind = .directory, allocated: Int64 = 0, logical: Int64 = 0, fileCount: Int = 0, restricted: Bool = false, protection: Set<Protection> = [], modifiedAt: Int64? = nil, accessedAt: Int64? = nil) {
+        self.path = path; self.kind = kind; self.allocated = allocated; self.logical = logical; self.fileCount = fileCount; self.restricted = restricted; self.protection = protection; self.modifiedAt = modifiedAt; self.accessedAt = accessedAt
     }
 }
 public enum Protection: String, Codable, Sendable, CaseIterable {
@@ -39,18 +40,36 @@ public struct Recommendation: Identifiable, Codable, Sendable {
     }
 }
 public enum CacheCategory: String, Codable, Sendable, CaseIterable, Identifiable {
-    case xcode, browser, compiler, update, build
+    case xcode, browser, logs, savedState, compiler, update, build
     public var id: String { rawValue }
     public var title: String {
         switch self {
-        case .xcode: "Xcode 编译缓存"; case .browser: "网页与应用缓存"; case .compiler: "开发工具缓存"
-        case .update: "更新安装暂存"; case .build: "项目构建目录"
+        case .xcode: "Xcode 编译缓存"
+        case .browser: "网页与应用缓存"
+        case .logs: "应用日志与诊断"
+        case .savedState: "已保存窗口状态"
+        case .compiler: "开发工具缓存"
+        case .update: "更新安装暂存"
+        case .build: "项目构建目录"
+        }
+    }
+    public var symbol: String {
+        switch self {
+        case .xcode: "hammer.fill"
+        case .browser: "safari.fill"
+        case .logs: "doc.text.below.ecg.fill"
+        case .savedState: "macwindow.on.rectangle"
+        case .compiler: "shippingbox.fill"
+        case .update: "arrow.down.circle.fill"
+        case .build: "cube.box.fill"
         }
     }
     public var reason: String {
         switch self {
         case .xcode: "可由 Xcode 重新生成。首次构建与索引会稍慢。"
         case .browser: "缓存可以重新下载。检查时会保留正在使用的文件。"
+        case .logs: "历史运行日志；含报告文档或正被占用的目录会自动保留。"
+        case .savedState: "应用退出时的历史窗口状态；运行中应用会自动保留。"
         case .compiler: "工具可以重新生成或下载。下次构建可能需要联网。"
         case .update: "已下载的安装暂存；当前运行环境不在清理范围。"
         case .build: "构建目录需要逐项检查；源码、工作树、安装包会阻止清理。"

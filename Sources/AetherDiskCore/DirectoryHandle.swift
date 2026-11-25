@@ -10,9 +10,32 @@ public struct BulkEntry: Sendable, Equatable {
     public let allocated: Int64
     public let logical: Int64
     public let modifiedAt: Int64
+    public let accessedAt: Int64
     public var isDirectory: Bool { (mode & S_IFMT) == S_IFDIR }
     public var isRegularFile: Bool { (mode & S_IFMT) == S_IFREG }
     public var isSymlink: Bool { (mode & S_IFMT) == S_IFLNK }
+
+    public init(
+        name: String,
+        dev: dev_t,
+        ino: ino_t,
+        mode: mode_t,
+        nlink: UInt32,
+        allocated: Int64,
+        logical: Int64,
+        modifiedAt: Int64,
+        accessedAt: Int64 = 0
+    ) {
+        self.name = name
+        self.dev = dev
+        self.ino = ino
+        self.mode = mode
+        self.nlink = nlink
+        self.allocated = allocated
+        self.logical = logical
+        self.modifiedAt = modifiedAt
+        self.accessedAt = accessedAt
+    }
 }
 
 struct InodeKey: Hashable, Sendable {
@@ -69,7 +92,7 @@ struct DirectoryHandle: Sendable {
         defer { close(copy) }
         var alist = attrlist()
         alist.bitmapcount = UInt16(ATTR_BIT_MAP_COUNT)
-        alist.commonattr = attrgroup_t(ATTR_CMN_RETURNED_ATTRS) | attrgroup_t(ATTR_CMN_NAME) | attrgroup_t(ATTR_CMN_DEVID) | attrgroup_t(ATTR_CMN_OBJTYPE) | attrgroup_t(ATTR_CMN_MODTIME) | attrgroup_t(ATTR_CMN_ACCESSMASK) | attrgroup_t(ATTR_CMN_FILEID)
+        alist.commonattr = attrgroup_t(ATTR_CMN_RETURNED_ATTRS) | attrgroup_t(ATTR_CMN_NAME) | attrgroup_t(ATTR_CMN_DEVID) | attrgroup_t(ATTR_CMN_OBJTYPE) | attrgroup_t(ATTR_CMN_MODTIME) | attrgroup_t(ATTR_CMN_ACCTIME) | attrgroup_t(ATTR_CMN_ACCESSMASK) | attrgroup_t(ATTR_CMN_FILEID)
         alist.fileattr = attrgroup_t(ATTR_FILE_LINKCOUNT) | attrgroup_t(ATTR_FILE_TOTALSIZE) | attrgroup_t(ATTR_FILE_ALLOCSIZE)
         let bufSize = 64 * 1024
         let buf = UnsafeMutableRawPointer.allocate(byteCount: bufSize, alignment: 8)
@@ -109,6 +132,11 @@ struct DirectoryHandle: Sendable {
                     mtime = Int64(cursor.loadUnaligned(as: Int.self))
                     cursor = cursor.advanced(by: 16)
                 }
+                var atime: Int64 = 0
+                if (returnedCommon & UInt32(ATTR_CMN_ACCTIME)) != 0 {
+                    atime = cursor.loadUnaligned(as: Int64.self)
+                    cursor = cursor.advanced(by: 16)
+                }
                 var accessMask: UInt32 = 0
                 if (returnedCommon & UInt32(ATTR_CMN_ACCESSMASK)) != 0 {
                     accessMask = cursor.loadUnaligned(as: UInt32.self)
@@ -126,11 +154,11 @@ struct DirectoryHandle: Sendable {
                         let logical = cursor.loadUnaligned(fromByteOffset: 4, as: Int64.self)
                         let allocated = cursor.loadUnaligned(fromByteOffset: 12, as: Int64.self)
                         let mode = mode_t(S_IFREG) | mode_t(accessMask & 0o7777)
-                        results.append(BulkEntry(name: name, dev: dev, ino: ino_t(fileID), mode: mode, nlink: nlink, allocated: allocated, logical: logical, modifiedAt: mtime))
+                        results.append(BulkEntry(name: name, dev: dev, ino: ino_t(fileID), mode: mode, nlink: nlink, allocated: allocated, logical: logical, modifiedAt: mtime, accessedAt: atime))
                     } else {
                         var st = stat()
                         if fstatat(descriptor, name, &st, AT_SYMLINK_NOFOLLOW) == 0 {
-                            results.append(BulkEntry(name: name, dev: st.st_dev, ino: st.st_ino, mode: st.st_mode, nlink: UInt32(st.st_nlink), allocated: Int64(st.st_blocks) * 512, logical: Int64(st.st_size), modifiedAt: Int64(st.st_mtimespec.tv_sec)))
+                            results.append(BulkEntry(name: name, dev: st.st_dev, ino: st.st_ino, mode: st.st_mode, nlink: UInt32(st.st_nlink), allocated: Int64(st.st_blocks) * 512, logical: Int64(st.st_size), modifiedAt: Int64(st.st_mtimespec.tv_sec), accessedAt: Int64(st.st_atimespec.tv_sec)))
                         }
                     }
                 }

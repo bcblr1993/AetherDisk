@@ -125,13 +125,161 @@ public enum SizeBasis: String, CaseIterable, Sendable, Identifiable {
     public var title: String { self == .allocated ? "磁盘占用" : "逻辑大小" }
     public func size(_ node: DiskNode) -> Int64 { self == .allocated ? node.allocated : node.logical }
 }
+public enum TimeAxis: String, CaseIterable, Sendable, Identifiable {
+    case modified, accessed
+    public var id: String { rawValue }
+    public var title: String {
+        switch self {
+        case .modified: "按修改时间"
+        case .accessed: "按访问时间"
+        }
+    }
+    public func timestamp(for node: DiskNode) -> Int64? {
+        switch self {
+        case .modified: node.modifiedAt
+        case .accessed: node.accessedAt ?? node.modifiedAt
+        }
+    }
+}
+public struct ClutterHighlightSummary: Sendable, Equatable {
+    public var mediaAllocated: Int64
+    public var mediaCount: Int
+    public var archiveAllocated: Int64
+    public var archiveCount: Int
+    public var stale90Allocated: Int64
+    public var stale90Count: Int
+    public var largestFile: DiskNode?
+
+    public init(
+        mediaAllocated: Int64 = 0,
+        mediaCount: Int = 0,
+        archiveAllocated: Int64 = 0,
+        archiveCount: Int = 0,
+        stale90Allocated: Int64 = 0,
+        stale90Count: Int = 0,
+        largestFile: DiskNode? = nil
+    ) {
+        self.mediaAllocated = mediaAllocated
+        self.mediaCount = mediaCount
+        self.archiveAllocated = archiveAllocated
+        self.archiveCount = archiveCount
+        self.stale90Allocated = stale90Allocated
+        self.stale90Count = stale90Count
+        self.largestFile = largestFile
+    }
+}
+public struct DuplicateGroupComparison: Sendable, Equatable {
+    public var newestPath: String?
+    public var oldestPath: String?
+    public var protectedCount: Int
+    public var spanDays: Int
+
+    public init(
+        newestPath: String? = nil,
+        oldestPath: String? = nil,
+        protectedCount: Int = 0,
+        spanDays: Int = 0
+    ) {
+        self.newestPath = newestPath
+        self.oldestPath = oldestPath
+        self.protectedCount = protectedCount
+        self.spanDays = spanDays
+    }
+}
+extension DuplicateSizeGroup {
+    public func comparisonSummary(timeAxis: TimeAxis = .modified) -> DuplicateGroupComparison {
+        let protectedCount = files.filter { !$0.protection.isEmpty || $0.restricted }.count
+        let timed = files.compactMap { file in
+            timeAxis.timestamp(for: file).map { (file: file, ts: $0) }
+        }
+        guard
+            let oldest = timed.min(by: { $0.ts == $1.ts ? $0.file.path < $1.file.path : $0.ts < $1.ts }),
+            let newest = timed.max(by: { $0.ts == $1.ts ? $0.file.path < $1.file.path : $0.ts < $1.ts })
+        else {
+            return DuplicateGroupComparison(
+                newestPath: nil,
+                oldestPath: nil,
+                protectedCount: protectedCount,
+                spanDays: 0
+            )
+        }
+        let spanDays = Int(max(0, newest.ts - oldest.ts) / 86_400)
+        return DuplicateGroupComparison(
+            newestPath: newest.file.path,
+            oldestPath: oldest.file.path,
+            protectedCount: protectedCount,
+            spanDays: spanDays
+        )
+    }
+}
 public enum LargeFileQuery {
-    public static func rows(_ files: [DiskNode], query: String = "", category: FileCategory? = nil, minimum: Int64 = 100 * 1024 * 1024, basis: SizeBasis = .allocated, staleDays: Int = 0, referenceDate: Date = Date()) -> [DiskNode] {
+    public static func rows(
+        _ files: [DiskNode],
+        query: String = "",
+        category: FileCategory? = nil,
+        minimum: Int64 = 100 * 1024 * 1024,
+        basis: SizeBasis = .allocated,
+        staleDays: Int = 0,
+        timeAxis: TimeAxis = .modified,
+        referenceDate: Date = Date()
+    ) -> [DiskNode] {
         let cutoff = Int64(referenceDate.timeIntervalSince1970) - Int64(staleDays) * 86_400
         return files.filter { node in
-            let matchesStale = staleDays <= 0 || (node.modifiedAt.map { $0 <= cutoff } ?? false)
+            let matchesStale = staleDays <= 0 || (timeAxis.timestamp(for: node).map { $0 <= cutoff } ?? false)
             return matchesStale && basis.size(node) >= minimum && (category == nil || FileCategory.classify(node.name, allocated: node.allocated) == category) && (query.isEmpty || node.path.localizedCaseInsensitiveContains(query))
         }.sorted { basis.size($0) == basis.size($1) ? $0.path < $1.path : basis.size($0) > basis.size($1) }
+    }
+
+    public static func clutterSummary(
+        _ files: [DiskNode],
+        timeAxis: TimeAxis = .modified,
+        referenceDate: Date = Date()
+    ) -> ClutterHighlightSummary {
+        let cutoff90 = Int64(referenceDate.timeIntervalSince1970) - 90 * 86_400
+        var mediaAllocated: Int64 = 0
+        var mediaCount = 0
+        var archiveAllocated: Int64 = 0
+        var archiveCount = 0
+        var stale90Allocated: Int64 = 0
+        var stale90Count = 0
+        var largestFile: DiskNode?
+
+        for node in files {
+            let category = FileCategory.classify(node.name, allocated: node.allocated)
+            switch category {
+            case .video, .audio, .image:
+                mediaAllocated += node.allocated
+                mediaCount += 1
+            case .archive:
+                archiveAllocated += node.allocated
+                archiveCount += 1
+            case .source, .document, .other:
+                break
+            }
+
+            if let ts = timeAxis.timestamp(for: node), ts <= cutoff90 {
+                stale90Allocated += node.allocated
+                stale90Count += 1
+            }
+
+            if let current = largestFile {
+                if node.allocated > current.allocated || (node.allocated == current.allocated && node.path < current.path) {
+                    largestFile = node
+                }
+            } else {
+                largestFile = node
+            }
+        }
+
+        return ClutterHighlightSummary(
+            mediaAllocated: mediaAllocated,
+            mediaCount: mediaCount,
+            archiveAllocated: archiveAllocated,
+            archiveCount: archiveCount,
+            stale90Allocated: stale90Allocated,
+            stale90Count: stale90Count,
+            largestFile: largestFile
+        )
     }
 }
 public enum RankingSort: String, CaseIterable, Sendable, Identifiable {
@@ -157,6 +305,41 @@ public enum SuggestionFilter: String, CaseIterable, Sendable, Identifiable {
         switch self { case .all: "全部"; case .eligible: "可检查"; case .protected: "已保护" }
     }
 }
+extension Recommendation: Equatable {
+    public static func == (lhs: Recommendation, rhs: Recommendation) -> Bool {
+        lhs.node == rhs.node && lhs.category == rhs.category
+    }
+}
+
+/// Logical application or toolchain grouping of cache cleanup recommendations.
+public struct RecommendationAppGroup: Identifiable, Sendable, Equatable {
+    public var id: String
+    public var name: String
+    public var symbol: String
+    public var allocated: Int64
+    public var eligibleCount: Int
+    public var blockedCount: Int
+    public var items: [Recommendation]
+
+    public init(
+        id: String,
+        name: String,
+        symbol: String,
+        allocated: Int64,
+        eligibleCount: Int,
+        blockedCount: Int,
+        items: [Recommendation]
+    ) {
+        self.id = id
+        self.name = name
+        self.symbol = symbol
+        self.allocated = allocated
+        self.eligibleCount = eligibleCount
+        self.blockedCount = blockedCount
+        self.items = items
+    }
+}
+
 public enum RecommendationQuery {
     public static func rows(_ items: [Recommendation], filter: SuggestionFilter = .all, category: CacheCategory? = nil, query: String = "", staleOnly: Bool = false, staleDays: Int = 90, referenceDate: Date = Date()) -> [Recommendation] {
         items.filter { item in
@@ -183,6 +366,286 @@ public enum RecommendationQuery {
         }
         return map.map { (category: $0.key, allocated: $0.value.allocated, count: $0.value.count) }
             .sorted { $0.allocated == $1.allocated ? $0.category.rawValue < $1.category.rawValue : $0.allocated > $1.allocated }
+    }
+
+    /// Groups recommendations by recognized macOS app, developer toolchain, or extracted bundle/app name, sorted descending by allocated bytes.
+    public static func groupedByApplication(
+        _ recommendations: [Recommendation],
+        home: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> [RecommendationAppGroup] {
+        guard !recommendations.isEmpty else { return [] }
+        let homePath = home.standardizedFileURL.path
+
+        struct Bucket {
+            var id: String
+            var name: String
+            var symbol: String
+            var items: [Recommendation]
+        }
+
+        var buckets: [String: Bucket] = [:]
+        for item in recommendations {
+            let descriptor = groupDescriptor(for: item, homePath: homePath)
+            if var existing = buckets[descriptor.id] {
+                existing.items.append(item)
+                if upperCaseCount(descriptor.name) > upperCaseCount(existing.name) {
+                    existing.name = descriptor.name
+                }
+                buckets[descriptor.id] = existing
+            } else {
+                buckets[descriptor.id] = Bucket(
+                    id: descriptor.id,
+                    name: descriptor.name,
+                    symbol: descriptor.symbol,
+                    items: [item]
+                )
+            }
+        }
+
+        return buckets.values.map { bucket in
+            let sortedItems = bucket.items.sorted { a, b in
+                if a.node.allocated != b.node.allocated { return a.node.allocated > b.node.allocated }
+                return a.id < b.id
+            }
+            let allocated = sortedItems.reduce(Int64(0)) { $0 + $1.node.allocated }
+            let eligibleCount = sortedItems.filter { !$0.blocked }.count
+            let blockedCount = sortedItems.count - eligibleCount
+            return RecommendationAppGroup(
+                id: bucket.id,
+                name: bucket.name,
+                symbol: bucket.symbol,
+                allocated: allocated,
+                eligibleCount: eligibleCount,
+                blockedCount: blockedCount,
+                items: sortedItems
+            )
+        }.sorted { a, b in
+            if a.allocated != b.allocated { return a.allocated > b.allocated }
+            if a.name != b.name { return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending }
+            return a.id < b.id
+        }
+    }
+
+    private static func upperCaseCount(_ text: String) -> Int {
+        text.unicodeScalars.filter { CharacterSet.uppercaseLetters.contains($0) }.count
+    }
+
+    private static func groupDescriptor(
+        for item: Recommendation,
+        homePath: String
+    ) -> (id: String, name: String, symbol: String) {
+        let path = item.node.path
+        let rel: String
+        if path == homePath {
+            rel = ""
+        } else if path.hasPrefix(homePath + "/") {
+            rel = String(path.dropFirst(homePath.count))
+        } else {
+            rel = path
+        }
+        let lowerRel = rel.lowercased()
+        let lowerName = item.node.name.lowercased()
+
+        if item.category == .build {
+            return ("toolchain:project-builds", "项目构建 (.build)", "cube.box.fill")
+        }
+
+        if item.category == .xcode
+            || lowerRel.contains("/library/developer/xcode/")
+            || lowerRel.contains("/library/developer/coresimulator/")
+            || lowerName.contains("com.apple.dt.xcode")
+            || lowerName == "xcode" {
+            return ("app:xcode", "Xcode", "hammer.fill")
+        }
+
+        if lowerRel.contains("/library/application support/cursor/")
+            || lowerName.contains("com.todesktop.230313mzl4w4u92")
+            || lowerName == "cursor"
+            || lowerName.hasPrefix("cursor.")
+            || lowerName.hasSuffix(".cursor")
+            || lowerName.hasSuffix(".cursor.savedstate") {
+            return ("app:cursor", "Cursor", "chevron.left.forwardslash.chevron.right")
+        }
+
+        if lowerRel.contains("/library/application support/code/")
+            || lowerName.contains("com.microsoft.vscode")
+            || (lowerName == "code" && lowerRel.contains("/library/"))
+            || lowerName == "vscode"
+            || lowerName.hasPrefix("vscode") {
+            return ("app:vscode", "VS Code", "chevron.left.forwardslash.chevron.right")
+        }
+
+        if lowerRel.contains("/library/application support/windsurf/")
+            || lowerName.contains("windsurf") {
+            return ("app:windsurf", "Windsurf", "wind")
+        }
+
+        if lowerRel.contains("/library/application support/claude/")
+            || lowerName.contains("com.anthropic.claude")
+            || lowerName == "claude"
+            || lowerName.hasPrefix("claude.")
+            || lowerName.hasSuffix(".claude.savedstate") {
+            return ("app:claude", "Claude", "sparkles")
+        }
+
+        if (item.category == .update && lowerRel.contains("codex-runtime")) || lowerName.contains("codex") {
+            return ("app:codex", "Codex", "terminal.fill")
+        }
+
+        if lowerName.contains("com.apple.safari")
+            || lowerName == "safari"
+            || lowerName == "safari.savedstate" {
+            return ("app:safari", "Safari", "safari.fill")
+        }
+
+        if lowerName.contains("com.google.chrome")
+            || lowerRel.contains("/google/chrome")
+            || lowerName == "chrome"
+            || lowerName == "google chrome" {
+            return ("app:chrome", "Google Chrome", "globe")
+        }
+
+        if lowerName.contains("company.thebrowser.browser")
+            || lowerName == "arc"
+            || lowerName == "arc.savedstate" {
+            return ("app:arc", "Arc", "globe")
+        }
+
+        if lowerName.contains("org.mozilla.firefox")
+            || lowerName == "firefox"
+            || lowerName == "firefox.savedstate" {
+            return ("app:firefox", "Firefox", "flame.fill")
+        }
+
+        if lowerRel == "/library/caches/homebrew"
+            || lowerRel.hasSuffix("/library/caches/homebrew")
+            || lowerName == "homebrew" {
+            return ("toolchain:homebrew", "Homebrew", "shippingbox.fill")
+        }
+
+        if lowerRel.hasPrefix("/.cargo/") || lowerRel.contains("/.cargo/") || lowerName == "cargo" {
+            return ("toolchain:cargo", "Cargo / Rust", "gearshape.2.fill")
+        }
+
+        let nodePrefixes = [
+            "/.npm/", "/.nvm/", "/.pnpm-store", "/.bun/", "/.yarn/",
+            "/.cache/deno", "/.cache/prisma", "/.cache/turbo", "/.cache/electron", "/.cache/cypress"
+        ]
+        if nodePrefixes.contains(where: { lowerRel.hasPrefix($0) || lowerRel.contains($0) }) {
+            return ("toolchain:node", "Node / npm / pnpm / bun", "cube.fill")
+        }
+
+        if lowerRel.hasPrefix("/.gradle/")
+            || lowerRel.contains("/.gradle/")
+            || lowerRel.contains("/.cache/jetbrains")
+            || lowerRel.contains("/library/caches/jetbrains")
+            || lowerName.contains("jetbrains")
+            || lowerName.hasPrefix("com.jetbrains.") {
+            return ("toolchain:jetbrains", "Gradle / JetBrains", "wrench.and.screwdriver.fill")
+        }
+
+        let pythonPrefixes = ["/.cache/pip", "/.cache/uv", "/.cache/torch", "/.cache/huggingface", "/.cache/pre-commit"]
+        if pythonPrefixes.contains(where: { lowerRel.hasPrefix($0) || lowerRel.contains($0) }) {
+            return ("toolchain:python", "Python / uv / pip", "terminal.fill")
+        }
+
+        if lowerRel.hasPrefix("/.docker/")
+            || lowerRel.contains("/.docker/")
+            || lowerName.contains("com.docker.")
+            || lowerName == "docker" {
+            return ("toolchain:docker", "Docker", "shippingbox.fill")
+        }
+
+        if ["/.cache/zig", "/.cache/sccache", "/.cache/ccache"].contains(where: { lowerRel.hasPrefix($0) || lowerRel.contains($0) }) {
+            return ("toolchain:cc-zig", "Zig / ccache / sccache", "cpu.fill")
+        }
+
+        if lowerRel.hasPrefix("/.cache/go-build") || lowerRel.contains("/.cache/go-build") {
+            return ("toolchain:go", "Go", "hammer.fill")
+        }
+
+        if lowerRel.contains("/library/caches/cocoapods") {
+            return ("toolchain:cocoapods", "CocoaPods", "shippingbox.fill")
+        }
+
+        if lowerRel.hasPrefix("/.pub-cache") || lowerRel.contains("/.pub-cache") {
+            return ("toolchain:dart", "Dart / Pub", "shippingbox.fill")
+        }
+
+        if lowerRel.hasPrefix("/.cache/bazel") || lowerRel.contains("/.cache/bazel") {
+            return ("toolchain:bazel", "Bazel", "hammer.fill")
+        }
+
+        if ["/.cache/playwright", "/.cache/ms-playwright", "/.cache/puppeteer"].contains(where: { lowerRel.hasPrefix($0) || lowerRel.contains($0) }) {
+            return ("toolchain:browser-test", "Playwright / Puppeteer", "globe")
+        }
+
+        if lowerRel.hasPrefix("/.sbt/") || lowerRel.contains("/.sbt/") || lowerRel.hasPrefix("/.ivy2/") || lowerRel.contains("/.ivy2/") {
+            return ("toolchain:jvm", "sbt / Ivy", "wrench.and.screwdriver.fill")
+        }
+
+        if lowerName.hasSuffix(".savedstate")
+            || lowerRel.contains("/library/caches/")
+            || lowerRel.contains("/library/logs/")
+            || lowerRel.contains("/library/saved application state/") {
+            let friendly = friendlyAppName(from: item.node.name)
+            let normalizedKey = friendly.lowercased().unicodeScalars
+                .filter { CharacterSet.alphanumerics.contains($0) }
+                .map(String.init)
+                .joined()
+            let key = normalizedKey.isEmpty ? lowerName : normalizedKey
+            return ("app:\(key)", friendly, "app.fill")
+        }
+
+        return ("category:\(item.category.rawValue)", item.category.title, item.category.symbol)
+    }
+
+    private static func friendlyAppName(from rawDirectoryName: String) -> String {
+        var stem = rawDirectoryName
+        if stem.lowercased().hasSuffix(".savedstate") {
+            stem = String(stem.dropLast(".savedstate".count))
+        }
+        let parts = stem.split(separator: ".").map(String.init)
+        let reverseDNSPrefixes: Set<String> = [
+            "com", "org", "io", "net", "app", "dev", "me", "co", "ai",
+            "edu", "gov", "company", "studio", "us", "uk", "de", "jp", "cn"
+        ]
+        let chosen: String
+        if parts.count >= 3, reverseDNSPrefixes.contains(parts[0].lowercased()) {
+            let genericSuffixes: Set<String> = [
+                "app", "macos", "osx", "mac", "desktop", "client", "helper",
+                "shipit", "agent", "service", "daemon", "extension", "framework",
+                "cache", "caches", "logs", "savedstate", "shared", "runtime", "installer"
+            ]
+            var tail = Array(parts.dropFirst(1))
+            if tail.count >= 2 && tail[0].lowercased() == "apple" {
+                tail.removeFirst()
+                if tail.count >= 2 && tail[0].lowercased() == "dt" {
+                    tail.removeFirst()
+                }
+            }
+            var idx = tail.count - 1
+            while idx > 0 && genericSuffixes.contains(tail[idx].lowercased()) {
+                idx -= 1
+            }
+            chosen = tail[idx]
+        } else {
+            chosen = stem
+        }
+        return formatAppToken(chosen)
+    }
+
+    private static func formatAppToken(_ token: String) -> String {
+        guard !token.isEmpty else { return token }
+        let hasUppercase = token.unicodeScalars.contains { CharacterSet.uppercaseLetters.contains($0) }
+        if hasUppercase {
+            return token
+        }
+        let words = token.split(whereSeparator: { $0 == "-" || $0 == "_" }).map { part -> String in
+            guard let first = part.first else { return "" }
+            return String(first).uppercased() + part.dropFirst()
+        }.filter { !$0.isEmpty }
+        return words.isEmpty ? token : words.joined(separator: " ")
     }
 }
 public enum ProjectSort: String, CaseIterable, Sendable, Identifiable {
@@ -485,6 +948,9 @@ public struct ScanCLIOptions: Sendable, Equatable {
     public var profile: ScanPerformanceProfile
     public var showDuplicates: Bool
     public var showVolumes: Bool
+    public var showApps: Bool
+    public var showHealth: Bool
+    public var showCloud: Bool
     public var showVersion: Bool
     public init(
         rootPath: String = "",
@@ -495,6 +961,9 @@ public struct ScanCLIOptions: Sendable, Equatable {
         profile: ScanPerformanceProfile = .balanced,
         showDuplicates: Bool = false,
         showVolumes: Bool = false,
+        showApps: Bool = false,
+        showHealth: Bool = false,
+        showCloud: Bool = false,
         showVersion: Bool = false
     ) {
         self.rootPath = rootPath
@@ -505,6 +974,9 @@ public struct ScanCLIOptions: Sendable, Equatable {
         self.profile = profile
         self.showDuplicates = showDuplicates
         self.showVolumes = showVolumes
+        self.showApps = showApps
+        self.showHealth = showHealth
+        self.showCloud = showCloud
         self.showVersion = showVersion
     }
     private static func expand(_ raw: String) -> String {
@@ -536,6 +1008,12 @@ public struct ScanCLIOptions: Sendable, Equatable {
                 opts.showDuplicates = true; i += 1
             } else if flag == "--volumes" {
                 opts.showVolumes = true; i += 1
+            } else if flag == "--apps" {
+                opts.showApps = true; i += 1
+            } else if flag == "--health" {
+                opts.showHealth = true; i += 1
+            } else if flag == "--cloud" {
+                opts.showCloud = true; i += 1
             } else if flag == "--version" {
                 opts.showVersion = true; i += 1
             } else if !flag.hasPrefix("-"), !flag.isEmpty, !hasRoot {
@@ -544,7 +1022,8 @@ public struct ScanCLIOptions: Sendable, Equatable {
                 throw ScanFailure.invalidRoot
             }
         }
-        let needsRoot = opts.jsonPath != nil || opts.csvPath != nil || opts.comparePath != nil || opts.showDuplicates || (!opts.showVersion && !opts.showVolumes)
+        let standaloneInfoOnly = opts.showVersion || opts.showVolumes || opts.showApps || opts.showHealth || opts.showCloud
+        let needsRoot = opts.jsonPath != nil || opts.csvPath != nil || opts.comparePath != nil || opts.showDuplicates || !standaloneInfoOnly
         guard !needsRoot || hasRoot else { throw ScanFailure.invalidRoot }
         return opts
     }

@@ -7,7 +7,13 @@ ROOT=os.environ.get('AETHERDISK_QA_ROOT','/Users/chenxu/AetherDisk-Release-QA-20
 AX_BIN=os.environ.get('AETHERDISK_AX_BIN','/tmp/AetherDiskAX-20261024')
 def remote(command):return subprocess.run(SSH+[command],text=True,capture_output=True,check=True,timeout=55).stdout.strip()
 def py(source):return subprocess.run(SSH+['python3 -'],input=source,text=True,capture_output=True,check=True,timeout=55).stdout.strip()
-def ax(action='dump',target=None):return remote(' '.join(map(shlex.quote,[AX_BIN,action]+([target] if target else []))))
+def ax(action='dump',target=None):
+ cmd=' '.join(map(shlex.quote,[AX_BIN,action]+([target] if target else [])))
+ for _ in range(4):
+  out=remote(cmd)
+  if action!='dump' or len(out.splitlines())>=5:return out
+  time.sleep(.3)
+ return out
 def stop():
  return py('''import subprocess,os,signal
 for row in subprocess.check_output(['ps','-axo','pid=,comm='],text=True).splitlines():

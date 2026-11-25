@@ -3,63 +3,283 @@ import AetherDiskCore
 
 struct LargeFilesPage: View {
     @ObservedObject var model: AppModel
+
+    private var palette: ModuleStagePalette {
+        ModuleStagePalette.forPage("large")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Surface {
                 VStack(alignment: .leading, spacing: 14) {
-                    PanelTitle(title: "跨目录大文件排行", caption: "只查看 · 不提供批量删除")
-                    HStack(spacing: 12) {
+                    HStack {
+                        PanelTitle(title: "我的杂物筛查台", caption: "只读定位与预览 · 不提供批量删除")
+                        Picker(
+                            "杂物视图",
+                            selection: Binding(
+                                get: { model.clutterTab },
+                                set: { nextTab in
+                                    model.clutterTab = nextTab
+                                    model.showDuplicateSuspects = (nextTab == .duplicates)
+                                }
+                            )
+                        ) {
+                            ForEach(ClutterSubTab.allCases) { tab in
+                                Text(tab.title).tag(tab)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .frame(width: 288)
+                        .accessibilityIdentifier("clutter-subtabs")
+                    }
+
+                    HStack(spacing: 10) {
                         DiskSearchField(placeholder: "搜索文件名或路径", text: $model.largeQuery, identifier: "large-search")
                         Picker("大小", selection: $model.largeBasis) {
                             ForEach(SizeBasis.allCases) { basis in Text(basis.title).tag(basis) }
-                        }.frame(width: 150).accessibilityIdentifier("large-basis")
+                        }.frame(width: 146).accessibilityIdentifier("large-basis")
                         Picker("至少", selection: $model.largeMinimum) {
                             Text("1 MiB").tag(Int64(1024 * 1024))
                             Text("10 MiB").tag(Int64(10 * 1024 * 1024))
                             Text("100 MiB").tag(Int64(100 * 1024 * 1024))
                             Text("1 GiB").tag(Int64(1024 * 1024 * 1024))
-                        }.frame(width: 120).accessibilityIdentifier("large-minimum")
-                        Picker("修改", selection: $model.largeStaleDays) {
+                        }.frame(width: 118).accessibilityIdentifier("large-minimum")
+                        Picker("时间维度", selection: $model.largeTimeAxis) {
+                            ForEach(TimeAxis.allCases) { axis in Text(axis.title).tag(axis) }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .frame(width: 172)
+                        .accessibilityIdentifier("clutter-time-axis")
+                        Picker(model.largeTimeAxis == .modified ? "修改" : "访问", selection: $model.largeStaleDays) {
                             Text("不限时间").tag(0)
-                            Text("30 天未改").tag(30)
-                            Text("90 天未改").tag(90)
-                            Text("1 年未改").tag(365)
-                        }.frame(width: 128).accessibilityIdentifier("large-stale")
+                            Text(model.largeTimeAxis == .modified ? "30 天未改" : "30 天未访问").tag(30)
+                            Text(model.largeTimeAxis == .modified ? "90 天未改" : "90 天未访问").tag(90)
+                            Text(model.largeTimeAxis == .modified ? "1 年未改" : "1 年未访问").tag(365)
+                        }.frame(width: 132).accessibilityIdentifier("large-stale")
                     }.font(.system(size: 11)).controlSize(.large)
-                    Picker("文件类型", selection: $model.largeCategory) {
-                        Text("全部类型").tag(nil as FileCategory?)
-                        ForEach(FileCategory.allCases) { Text($0.title).tag(Optional($0)) }
-                    }.pickerStyle(.segmented).font(.system(size: 11)).accessibilityIdentifier("large-category")
+
+                    if model.clutterTab != .downloadsAndArchives {
+                        Picker("文件类型", selection: $model.largeCategory) {
+                            Text("全部类型").tag(nil as FileCategory?)
+                            ForEach(FileCategory.allCases) { Text($0.title).tag(Optional($0)) }
+                        }
+                        .pickerStyle(.segmented)
+                        .font(.system(size: 11))
+                        .accessibilityIdentifier("large-category")
+                    }
+
                     HStack(spacing: 12) {
                         Toggle("疑似重复大文件线索（仅元数据）", isOn: $model.showDuplicateSuspects)
                             .toggleStyle(.checkbox)
                             .font(.system(size: 11))
                             .accessibilityIdentifier("large-duplicates-toggle")
                         Spacer()
+                        Text("硬链接自动去重 · 稀疏文件区分实际块占用与逻辑体积")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
                     }
-                    Text("按磁盘占用和逻辑大小各保留前 200 个、至少 1 MiB 的文件；不受目录列表条数限制。硬链接去重。稀疏文件可能逻辑很大、实际占用很小。")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                        .lineSpacing(3)
                 }
             }
+
             if let result = model.result, !result.complete {
-                Label("当前为部分扫描结果，排行与类型统计可能不完整。", systemImage: "exclamationmark.circle")
+                Label("当前为部分扫描结果，排行与类型统计可能不完整。", systemImage: "exclamationmark.circle.fill")
                     .font(.system(size: 11))
                     .foregroundStyle(.orange)
             }
-            if model.showDuplicateSuspects {
+
+            if model.result == nil && !model.scanning {
+                ModuleHeroStage(
+                    palette: palette,
+                    targetPath: DiskFormat.compactPath(model.root.path),
+                    features: [
+                        ("doc.text.magnifyingglass", "跨目录巨型文件排行"),
+                        ("clock.arrow.circlepath", "修改与访问双时间轴陈旧筛查"),
+                        ("doc.on.doc.fill", "纯元数据疑似重复快速对比"),
+                        ("eye", "一键 Quick Look 预览")
+                    ],
+                    onChooseFolder: { model.chooseFolder() },
+                    onQuickScanHome: { model.start(FileManager.default.homeDirectoryForCurrentUser) }
+                )
+            } else if model.showDuplicateSuspects || model.clutterTab == .duplicates {
                 duplicateSuspectsSection
             } else {
+                clutterMetadataStrip
                 largeFilesListSection
             }
         }
     }
 
+    private func categorySymbol(for category: FileCategory) -> String {
+        switch category {
+        case .video: return "film.fill"
+        case .audio: return "waveform"
+        case .image: return "photo.fill"
+        case .archive: return "shippingbox.fill"
+        case .document: return "doc.text.fill"
+        case .source: return "chevron.left.forwardslash.chevron.right"
+        case .other: return "doc.fill"
+        }
+    }
+
+    private func categoryColor(for category: FileCategory) -> Color {
+        DiskTheme.color(
+            forMode: .fileType,
+            colorIndex: 0,
+            category: category,
+            ageBucket: .recent30d,
+            isProtected: false,
+            isTail: false
+        )
+    }
+
+    private func formattedShortDate(_ timestamp: Int64?) -> String {
+        guard let timestamp, timestamp > 0 else { return "未知" }
+        return Date(timeIntervalSince1970: TimeInterval(timestamp))
+            .formatted(date: .abbreviated, time: .omitted)
+    }
+
+    private func formattedDateTime(_ timestamp: Int64?) -> String {
+        guard let timestamp, timestamp > 0 else { return "未知" }
+        return Date(timeIntervalSince1970: TimeInterval(timestamp))
+            .formatted(date: .abbreviated, time: .shortened)
+    }
+
+    private func ageTagTitle(for bucket: AgeBucket) -> String {
+        if model.largeTimeAxis == .accessed && bucket == .over1y {
+            return "1 年以上未访问"
+        }
+        return bucket.title
+    }
+
+    private func sizeTierTag(for bytes: Int64) -> (String, Color)? {
+        if bytes >= 1024 * 1024 * 1024 {
+            return ("巨型 ≥ 1 GiB", DiskTheme.danger)
+        } else if bytes >= 100 * 1024 * 1024 {
+            return ("大型 ≥ 100 MiB", .orange)
+        }
+        return nil
+    }
+
+    private var clutterMetadataStrip: some View {
+        let summary = model.clutterHighlight
+        let isMediaActive = model.clutterTab == .largeAndOld
+            && (model.largeCategory == .video || model.largeCategory == .audio || model.largeCategory == .image)
+        let isArchiveActive = model.clutterTab == .downloadsAndArchives
+        let isStaleActive = model.clutterTab == .largeAndOld && model.largeStaleDays >= 90
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("杂物资产分布概览（≥ 1 MiB 独立文件）")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("clutter-meta-cards")
+                Spacer()
+                Text(model.largeTimeAxis == .modified ? "陈旧度统计口径：最后修改时间" : "陈旧度统计口径：最后访问时间")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+            }
+
+            HStack(spacing: 12) {
+                clutterMetaCard(
+                    title: "媒体资产",
+                    value: DiskFormat.bytes(summary.mediaAllocated),
+                    caption: "\(summary.mediaCount) 个文件 · 视频 / 音频 / 图片",
+                    actionTitle: "筛选媒体",
+                    symbol: "film.fill",
+                    tint: palette.primary,
+                    active: isMediaActive,
+                    accessibilityLabel: "快速筛选媒体资产"
+                ) {
+                    model.applyClutterMediaFilter()
+                }
+
+                clutterMetaCard(
+                    title: "安装包与归档",
+                    value: DiskFormat.bytes(summary.archiveAllocated),
+                    caption: "\(summary.archiveCount) 个文件 · .dmg / .pkg / .zip 等",
+                    actionTitle: "查看归档",
+                    symbol: "shippingbox.fill",
+                    tint: palette.secondary,
+                    active: isArchiveActive,
+                    accessibilityLabel: "快速查看安装包与归档清单"
+                ) {
+                    model.applyClutterArchiveFilter()
+                }
+
+                clutterMetaCard(
+                    title: "陈旧大文件",
+                    value: DiskFormat.bytes(summary.stale90Allocated),
+                    caption: "\(summary.stale90Count) 个文件 · \(model.largeTimeAxis == .modified ? "90 天以上未修改" : "90 天以上未访问")",
+                    actionTitle: "筛选 90 天",
+                    symbol: "clock.arrow.circlepath",
+                    tint: DiskTheme.teal,
+                    active: isStaleActive,
+                    accessibilityLabel: "快速筛选 90 天陈旧大文件"
+                ) {
+                    model.applyClutterStaleFilter()
+                }
+            }
+        }
+    }
+
+    private func clutterMetaCard(
+        title: String,
+        value: String,
+        caption: String,
+        actionTitle: String,
+        symbol: String,
+        tint: Color,
+        active: Bool,
+        accessibilityLabel: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Surface(padding: 13) {
+                HStack(alignment: .top, spacing: 11) {
+                    ModuleIconBadge(symbol: symbol, primary: tint, secondary: tint.opacity(0.75), size: 30)
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(spacing: 6) {
+                            Text(title).font(.system(size: 11)).foregroundStyle(.secondary)
+                            Spacer(minLength: 4)
+                            Text(actionTitle)
+                                .font(.system(size: 9.5, weight: .semibold))
+                                .foregroundStyle(tint)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(tint.opacity(0.11), in: Capsule())
+                        }
+                        Text(value)
+                            .font(.system(size: 20, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                        Text(caption)
+                            .font(.system(size: 9.5))
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: DiskTheme.cardRadius, style: .continuous)
+                    .stroke(active ? tint.opacity(0.55) : .clear, lineWidth: 1.5)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel)
+        .help("只读切换至\(title)视图")
+    }
+
     private var largeFilesListSection: some View {
         Surface {
             VStack(alignment: .leading, spacing: 10) {
-                PanelTitle(title: "文件清单", caption: "\(model.largeFiles.count) 项")
+                PanelTitle(
+                    title: model.clutterTab == .downloadsAndArchives ? "安装包与归档文件清单" : "跨目录大文件与旧文件清单",
+                    caption: "\(model.largeFiles.count) 项 · \(model.largeTimeAxis.title)"
+                )
                 if model.result?.analysis == nil {
                     Text(model.scanning ? "扫描完成后显示全目录排行。" : "开始一次新扫描，获取大文件排行。")
                         .font(.system(size: 12))
@@ -72,38 +292,86 @@ struct LargeFilesPage: View {
                         .padding(.vertical, 28)
                 }
                 ForEach(model.largeFiles) { node in
-                    DiskInteractiveRow(horizontalPadding: 8, verticalPadding: 10) {
+                    let basisSize = model.largeBasis.size(node)
+                    let category = FileCategory.classify(node.name, allocated: node.allocated)
+                    let tint = categoryColor(for: category)
+                    let activeTimestamp = model.largeTimeAxis.timestamp(for: node)
+                    let ageBucket = AgeBucket.classify(modifiedAt: activeTimestamp)
+                    let isSelected = model.selectedPath == node.path
+                    DiskInteractiveRow(selected: isSelected, horizontalPadding: 8, verticalPadding: 10) {
                         HStack(alignment: .top, spacing: 12) {
-                            Image(systemName: "doc.fill").font(.system(size: 19)).foregroundStyle(DiskTheme.accent).frame(width: 28)
+                            ModuleIconBadge(
+                                symbol: categorySymbol(for: category),
+                                primary: tint,
+                                secondary: tint.opacity(0.75),
+                                size: 32
+                            )
                             VStack(alignment: .leading, spacing: 5) {
-                                Text(node.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                                Text(DiskFormat.compactPath(node.path)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(2).help(node.path)
-                                if !node.protection.isEmpty {
-                                    Text(node.protection.map(\.title).sorted().joined(separator: " · "))
-                                        .font(.system(size: 10))
-                                        .foregroundStyle(.teal)
+                                HStack(spacing: 6) {
+                                    Text(node.name).font(.system(size: 12.5, weight: .semibold)).lineLimit(1)
+                                    Tag(text: category.title, color: tint)
+                                    if let tier = sizeTierTag(for: basisSize) {
+                                        Tag(text: tier.0, color: tier.1)
+                                    }
+                                    if ageBucket == .over1y || ageBucket == .days90to365 {
+                                        Tag(text: ageTagTitle(for: ageBucket), color: .secondary)
+                                    }
+                                }
+                                Text(DiskFormat.compactPath(node.path))
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                                    .help(node.path)
+                                HStack(spacing: 8) {
+                                    HStack(spacing: 5) {
+                                        Image(systemName: "clock")
+                                            .font(.system(size: 9))
+                                            .foregroundStyle(.tertiary)
+                                        Text("修改 \(formattedShortDate(node.modifiedAt)) · 访问 \(formattedShortDate(node.accessedAt))")
+                                            .font(.system(size: 10))
+                                            .foregroundStyle(.secondary)
+                                            .monospacedDigit()
+                                    }
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 2.5)
+                                    .background(DiskTheme.inset, in: Capsule())
+
+                                    if !node.protection.isEmpty {
+                                        Text(node.protection.map(\.title).sorted().joined(separator: " · "))
+                                            .font(.system(size: 10))
+                                            .foregroundStyle(DiskTheme.teal)
+                                    }
                                 }
                             }
                             Spacer(minLength: 12)
                             VStack(alignment: .trailing, spacing: 5) {
-                                Text(DiskFormat.bytes(model.largeBasis.size(node)))
-                                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                                Text(DiskFormat.bytes(basisSize))
+                                    .font(.system(size: 14, weight: .bold, design: .rounded))
                                     .monospacedDigit()
                                 Text(model.largeBasis == .allocated ? "逻辑 " + DiskFormat.bytes(node.logical) : "占用 " + DiskFormat.bytes(node.allocated))
                                     .font(.system(size: 10))
                                     .foregroundStyle(.secondary)
                                 HStack(spacing: 6) {
-                                    Button("快速预览") { model.quickLook(node.path) }
-                                        .buttonStyle(DiskButtonStyle(kind: .quiet))
-                                        .controlSize(.small)
-                                        .accessibilityLabel("预览 " + node.name)
-                                    Button("在 Finder 中显示") { model.reveal(node.path) }
-                                        .buttonStyle(DiskButtonStyle(kind: .quiet))
-                                        .controlSize(.small)
-                                        .accessibilityLabel("定位 " + node.name)
+                                    Button("快速预览") {
+                                        model.selectedPath = node.path
+                                        model.quickLook(node.path)
+                                    }
+                                    .buttonStyle(DiskButtonStyle(kind: .quiet))
+                                    .controlSize(.small)
+                                    .accessibilityLabel("预览 " + node.name)
+                                    Button("在 Finder 中显示") {
+                                        model.selectedPath = node.path
+                                        model.reveal(node.path)
+                                    }
+                                    .buttonStyle(DiskButtonStyle(kind: .quiet))
+                                    .controlSize(.small)
+                                    .accessibilityLabel("定位 " + node.name)
                                 }
                             }
                         }
+                    }
+                    .onTapGesture {
+                        model.selectedPath = node.path
                     }
                     .contextMenu {
                         Button("快速预览") { model.quickLook(node.path) }
@@ -118,10 +386,10 @@ struct LargeFilesPage: View {
 
     private var duplicateSuspectsSection: some View {
         Surface {
-            VStack(alignment: .leading, spacing: 12) {
-                PanelTitle(title: "疑似重复大文件线索", caption: "\(model.duplicateGroups.count) 组")
+            VStack(alignment: .leading, spacing: 14) {
+                PanelTitle(title: "疑似重复大文件线索", caption: "\(model.duplicateGroups.count) 组 · \(model.largeTimeAxis.title)")
                 HStack(spacing: 8) {
-                    Image(systemName: "doc.on.doc").foregroundStyle(DiskTheme.accent)
+                    Image(systemName: "doc.on.doc.fill").foregroundStyle(palette.primary)
                     Text("仅按逻辑大小与扩展名归组，绝不读取文件内容 · 仅提供快速预览与定位")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
@@ -140,69 +408,314 @@ struct LargeFilesPage: View {
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .padding(.vertical, 28)
-                }
+                } else {
+                    if let selectedGroup = model.selectedDuplicateGroup {
+                        duplicateComparisonPanel(for: selectedGroup)
+                    }
 
-                ForEach(model.duplicateGroups) { group in
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 8) {
-                            Text(group.ext == "(无扩展名)" ? "无扩展名" : ".\(group.ext)")
-                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                            Tag(text: group.category.title, color: DiskTheme.accent)
-                            Text("逻辑大小 \(DiskFormat.bytes(group.logicalSize)) · \(group.files.count) 份独立文件")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            if group.potentialRedundantAllocated > 0 {
-                                Tag(text: "疑似冗余约 \(DiskFormat.bytes(group.potentialRedundantAllocated))", color: .orange)
-                            }
-                            Text("总占用 \(DiskFormat.bytes(group.totalAllocated))")
-                                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                                .monospacedDigit()
-                        }
-                        ForEach(group.files) { file in
-                            DiskInteractiveRow(horizontalPadding: 8, verticalPadding: 6) {
-                                HStack(spacing: 10) {
-                                    Image(systemName: "doc.fill").font(.system(size: 14)).foregroundStyle(DiskTheme.accent)
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        HStack(spacing: 6) {
-                                            Text(file.name).font(.system(size: 11, weight: .medium)).lineLimit(1)
-                                            if !file.protection.isEmpty {
-                                                Text(file.protection.map(\.title).sorted().joined(separator: " · "))
-                                                    .font(.system(size: 9))
-                                                    .foregroundStyle(.teal)
-                                            }
-                                        }
-                                        Text(DiskFormat.compactPath(file.path))
-                                            .font(.system(size: 10))
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
-                                            .truncationMode(.middle)
-                                            .help(file.path)
+                    ForEach(model.duplicateGroups) { group in
+                        let isGroupSelected = model.selectedDuplicateGroup?.id == group.id
+                        let groupComparison = group.comparisonSummary(timeAxis: model.largeTimeAxis)
+                        let catTint = categoryColor(for: group.category)
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 8) {
+                                Image(systemName: categorySymbol(for: group.category))
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(catTint)
+                                Text(group.ext == "(无扩展名)" ? "无扩展名" : ".\(group.ext)")
+                                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                Tag(text: group.category.title, color: catTint)
+                                Text("逻辑大小 \(DiskFormat.bytes(group.logicalSize)) · \(group.files.count) 份独立文件")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                                if isGroupSelected {
+                                    Tag(text: "正在对比", color: palette.primary)
+                                }
+                                Spacer()
+                                if group.potentialRedundantAllocated > 0 {
+                                    Tag(text: "疑似冗余约 \(DiskFormat.bytes(group.potentialRedundantAllocated))", color: .orange)
+                                }
+                                Text("总占用 \(DiskFormat.bytes(group.totalAllocated))")
+                                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                                    .monospacedDigit()
+                                if !isGroupSelected {
+                                    Button("对比详情") {
+                                        model.selectedDuplicateGroupID = group.id
+                                        model.selectedPath = group.files.first?.path
                                     }
-                                    Spacer(minLength: 8)
-                                    Text(DiskFormat.bytes(file.allocated))
-                                        .font(.system(size: 11, weight: .medium, design: .rounded))
-                                        .monospacedDigit()
-                                    Button("快速预览") { model.quickLook(file.path) }
-                                        .buttonStyle(DiskButtonStyle(kind: .quiet))
-                                        .controlSize(.small)
-                                    Button("在 Finder 中显示") { model.reveal(file.path) }
-                                        .buttonStyle(DiskButtonStyle(kind: .quiet))
-                                        .controlSize(.small)
+                                    .buttonStyle(DiskButtonStyle(kind: .quiet))
+                                    .controlSize(.small)
                                 }
                             }
-                            .contextMenu {
-                                Button("快速预览") { model.quickLook(file.path) }
-                                Button("在 Finder 中显示") { model.reveal(file.path) }
-                                Button("复制路径") { model.copyPath(file.path) }
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                model.selectedDuplicateGroupID = group.id
+                                model.selectedPath = group.files.first?.path
+                            }
+
+                            ForEach(group.files) { file in
+                                let isNewest = groupComparison.newestPath == file.path
+                                let isOldest = groupComparison.oldestPath == file.path
+                                DiskInteractiveRow(selected: model.selectedPath == file.path, horizontalPadding: 8, verticalPadding: 6) {
+                                    HStack(spacing: 10) {
+                                        Image(systemName: categorySymbol(for: group.category))
+                                            .font(.system(size: 14))
+                                            .foregroundStyle(catTint)
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            HStack(spacing: 6) {
+                                                Text(file.name).font(.system(size: 11, weight: .medium)).lineLimit(1)
+                                                if isNewest {
+                                                    Tag(text: "最新副本", color: DiskTheme.accent)
+                                                } else if isOldest {
+                                                    Tag(text: "较旧副本", color: .orange)
+                                                }
+                                                if !file.protection.isEmpty {
+                                                    Text(file.protection.map(\.title).sorted().joined(separator: " · "))
+                                                        .font(.system(size: 9))
+                                                        .foregroundStyle(DiskTheme.teal)
+                                                }
+                                            }
+                                            Text(DiskFormat.compactPath(file.path))
+                                                .font(.system(size: 10))
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(1)
+                                                .truncationMode(.middle)
+                                                .help(file.path)
+                                            Text("修改 \(formattedShortDate(file.modifiedAt)) · 访问 \(formattedShortDate(file.accessedAt))")
+                                                .font(.system(size: 9.5))
+                                                .foregroundStyle(.tertiary)
+                                                .monospacedDigit()
+                                        }
+                                        Spacer(minLength: 8)
+                                        VStack(alignment: .trailing, spacing: 2) {
+                                            Text(DiskFormat.bytes(file.allocated))
+                                                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                                .monospacedDigit()
+                                            if file.logical != file.allocated {
+                                                Text("逻辑 \(DiskFormat.bytes(file.logical))")
+                                                    .font(.system(size: 9))
+                                                    .foregroundStyle(.tertiary)
+                                                    .monospacedDigit()
+                                            }
+                                        }
+                                        Button("快速预览") {
+                                            model.selectedDuplicateGroupID = group.id
+                                            model.selectedPath = file.path
+                                            model.quickLook(file.path)
+                                        }
+                                        .buttonStyle(DiskButtonStyle(kind: .quiet))
+                                        .controlSize(.small)
+                                        Button("在 Finder 中显示") {
+                                            model.selectedDuplicateGroupID = group.id
+                                            model.selectedPath = file.path
+                                            model.reveal(file.path)
+                                        }
+                                        .buttonStyle(DiskButtonStyle(kind: .quiet))
+                                        .controlSize(.small)
+                                    }
+                                }
+                                .onTapGesture {
+                                    model.selectedDuplicateGroupID = group.id
+                                    model.selectedPath = file.path
+                                }
+                                .contextMenu {
+                                    Button("快速预览") { model.quickLook(file.path) }
+                                    Button("在 Finder 中显示") { model.reveal(file.path) }
+                                    Button("复制路径") { model.copyPath(file.path) }
+                                }
                             }
                         }
+                        .padding(12)
+                        .background(
+                            isGroupSelected ? palette.primary.opacity(0.06) : DiskTheme.inset,
+                            in: RoundedRectangle(cornerRadius: DiskTheme.controlRadius)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: DiskTheme.controlRadius)
+                                .stroke(isGroupSelected ? palette.primary.opacity(0.35) : .clear, lineWidth: 1.2)
+                        )
                     }
-                    .padding(12)
-                    .background(DiskTheme.inset, in: RoundedRectangle(cornerRadius: DiskTheme.controlRadius))
                 }
             }
         }
+        .onAppear {
+            model.syncSelectedDuplicateGroup()
+        }
+        .onChange(of: model.duplicateGroups) { _, _ in
+            model.syncSelectedDuplicateGroup()
+        }
+    }
+
+    private func duplicateComparisonPanel(for group: DuplicateSizeGroup) -> some View {
+        let comparison = group.comparisonSummary(timeAxis: model.largeTimeAxis)
+        let newestFile = comparison.newestPath.flatMap { path in group.files.first { $0.path == path } }
+        let oldestFile = comparison.oldestPath.flatMap { path in group.files.first { $0.path == path } }
+        let extLabel = group.ext == "(无扩展名)" ? "无扩展名" : ".\(group.ext)"
+
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "rectangle.split.2x1.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(palette.primary)
+                Text("疑似重复快速对比面板")
+                    .font(.system(size: 13.5, weight: .semibold, design: .rounded))
+                    .accessibilityIdentifier("duplicate-compare-panel")
+                Tag(text: "\(extLabel) · \(group.files.count) 份副本", color: palette.primary)
+                Spacer()
+                Tag(text: "纯只读核验 · 无删除入口", color: DiskTheme.teal)
+            }
+
+            HStack(spacing: 10) {
+                comparisonMetricTile(
+                    title: "物理 / 单份逻辑",
+                    value: "\(DiskFormat.bytes(group.totalAllocated)) / \(DiskFormat.bytes(group.logicalSize))",
+                    caption: "疑似冗余约 \(DiskFormat.bytes(group.potentialRedundantAllocated))"
+                )
+                comparisonMetricTile(
+                    title: "时间跨度",
+                    value: "\(comparison.spanDays) 天",
+                    caption: model.largeTimeAxis == .modified ? "按修改时间计算" : "按访问时间计算"
+                )
+                comparisonMetricTile(
+                    title: "受保护副本",
+                    value: "\(comparison.protectedCount) / \(group.files.count) 份",
+                    caption: comparison.protectedCount > 0 ? "含保护防线标记" : "暂无保护标记"
+                )
+                comparisonMetricTile(
+                    title: "对比时间轴",
+                    value: model.largeTimeAxis.title,
+                    caption: "支持点击下方分组切换对比"
+                )
+            }
+
+            HStack(alignment: .top, spacing: 12) {
+                duplicateComparisonFileCard(
+                    roleTitle: "最新副本",
+                    roleColor: DiskTheme.accent,
+                    file: newestFile,
+                    groupCategory: group.category
+                )
+                duplicateComparisonFileCard(
+                    roleTitle: "较旧副本",
+                    roleColor: .orange,
+                    file: oldestFile,
+                    groupCategory: group.category
+                )
+            }
+        }
+        .padding(14)
+        .background(DiskTheme.elevatedSurface, in: RoundedRectangle(cornerRadius: DiskTheme.cardRadius, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: DiskTheme.cardRadius, style: .continuous)
+                .stroke(palette.primary.opacity(0.26), lineWidth: 1)
+        )
+    }
+
+    private func comparisonMetricTile(title: String, value: String, caption: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Text(caption)
+                .font(.system(size: 9.5))
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DiskTheme.inset, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+    }
+
+    private func duplicateComparisonFileCard(
+        roleTitle: String,
+        roleColor: Color,
+        file: DiskNode?,
+        groupCategory: FileCategory
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Tag(text: roleTitle, color: roleColor)
+                if let file, !file.protection.isEmpty {
+                    Tag(text: file.protection.map(\.title).sorted().joined(separator: " · "), color: DiskTheme.teal)
+                }
+                Spacer(minLength: 4)
+            }
+
+            if let file {
+                HStack(spacing: 8) {
+                    ModuleIconBadge(
+                        symbol: categorySymbol(for: groupCategory),
+                        primary: roleColor,
+                        secondary: roleColor.opacity(0.75),
+                        size: 26
+                    )
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(file.name)
+                            .font(.system(size: 12, weight: .semibold))
+                            .lineLimit(1)
+                        Text(DiskFormat.compactPath(file.path))
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(file.path)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("物理占用 \(DiskFormat.bytes(file.allocated)) · 逻辑大小 \(DiskFormat.bytes(file.logical))")
+                        .font(.system(size: 10.5, weight: .medium, design: .rounded))
+                        .monospacedDigit()
+                    Text("修改时间 \(formattedDateTime(file.modifiedAt))")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                    Text("访问时间 \(formattedDateTime(file.accessedAt))")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+
+                HStack(spacing: 8) {
+                    Button {
+                        model.selectedPath = file.path
+                        model.quickLook(file.path)
+                    } label: {
+                        Label("快速预览 (⌘Y)", systemImage: "eye")
+                    }
+                    .buttonStyle(DiskButtonStyle(kind: .secondary))
+                    .controlSize(.small)
+                    .help("使用系统 Quick Look 只读预览 \(file.name) (⌘Y)")
+
+                    Button {
+                        model.selectedPath = file.path
+                        model.reveal(file.path)
+                    } label: {
+                        Label("在 Finder 中显示", systemImage: "arrow.up.forward.app")
+                    }
+                    .buttonStyle(DiskButtonStyle(kind: .quiet))
+                    .controlSize(.small)
+                }
+            } else {
+                Text("当前分组缺少时间戳元数据，请在下方清单核对副本。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DiskTheme.surface.opacity(0.85), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .stroke(DiskTheme.line, lineWidth: 1)
+        )
     }
 }
 
@@ -211,6 +724,7 @@ struct FileTypesPage: View {
     var types: [FileTypeUsage] { model.result?.analysis?.fileTypes ?? [] }
     var ageBuckets: [AgeBucketUsage] { (model.result?.analysis?.ageBuckets ?? []).filter { $0.files > 0 } }
     var total: Int64 { max(1, types.reduce(0) { $0 + $1.allocated }) }
+
     var body: some View {
         let positiveTypes = types.filter { $0.allocated > 0 }
         VStack(alignment: .leading, spacing: 16) {
@@ -263,10 +777,10 @@ struct FileTypesPage: View {
                         VStack(alignment: .leading, spacing: 8) {
                             HStack {
                                 Circle().fill(DiskTheme.colors[index % DiskTheme.colors.count]).frame(width: 8, height: 8)
-                                Text(usage.category.title).font(.system(size: 13, weight: .medium))
+                                Text(usage.category.title).font(.system(size: 13, weight: .semibold))
                                 Text("\(usage.files.formatted()) 个文件").font(.system(size: 10)).foregroundStyle(.secondary)
                                 Spacer()
-                                Text(DiskFormat.bytes(usage.allocated)).font(.system(size: 14, weight: .semibold, design: .rounded))
+                                Text(DiskFormat.bytes(usage.allocated)).font(.system(size: 14, weight: .bold, design: .rounded))
                                 Text(String(format: "%.1f%%", Double(usage.allocated) / Double(total) * 100))
                                     .font(.system(size: 10))
                                     .foregroundStyle(.secondary)
@@ -284,6 +798,8 @@ struct FileTypesPage: View {
                                 HStack(spacing: 6) {
                                     ForEach(usage.extensions.prefix(6)) { ext in
                                         Button {
+                                            model.clutterTab = .largeAndOld
+                                            model.showDuplicateSuspects = false
                                             model.largeCategory = usage.category
                                             model.largeQuery = ext.ext == "(无扩展名)" ? "" : "." + ext.ext
                                             model.page = "large"
@@ -300,11 +816,16 @@ struct FileTypesPage: View {
                             HStack {
                                 Text("逻辑大小 " + DiskFormat.bytes(usage.logical)).font(.system(size: 10)).foregroundStyle(.secondary)
                                 Spacer()
-                                Button("查看此类大文件") { model.largeCategory = usage.category; model.page = "large" }
-                                    .buttonStyle(DiskButtonStyle(kind: .quiet))
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(DiskTheme.accent)
-                                    .accessibilityLabel("查看大文件 " + usage.category.title)
+                                Button("查看此类大文件") {
+                                    model.clutterTab = .largeAndOld
+                                    model.showDuplicateSuspects = false
+                                    model.largeCategory = usage.category
+                                    model.page = "large"
+                                }
+                                .buttonStyle(DiskButtonStyle(kind: .quiet))
+                                .font(.system(size: 11))
+                                .foregroundStyle(DiskTheme.accent)
+                                .accessibilityLabel("查看大文件 " + usage.category.title)
                             }
                         }.padding(.vertical, 9)
                     }
@@ -321,11 +842,13 @@ struct FileTypesPage: View {
                             ForEach(ageBuckets) { item in
                                 VStack(alignment: .leading, spacing: 6) {
                                     Text(item.bucket.title).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
-                                    Text(DiskFormat.bytes(item.allocated)).font(.system(size: 15, weight: .semibold, design: .rounded)).monospacedDigit()
+                                    Text(DiskFormat.bytes(item.allocated)).font(.system(size: 15, weight: .bold, design: .rounded)).monospacedDigit()
                                     Text("\(item.files.formatted()) 个文件 · \(String(format: "%.1f%%", Double(item.allocated) / Double(total) * 100))")
                                         .font(.system(size: 10))
                                         .foregroundStyle(.tertiary)
                                     Button("筛选大文件 →") {
+                                        model.clutterTab = .largeAndOld
+                                        model.showDuplicateSuspects = false
                                         model.largeCategory = nil
                                         model.largeStaleDays = item.bucket.staleDaysFilter
                                         model.page = "large"
@@ -359,7 +882,7 @@ struct ProjectsPage: View {
                             ForEach(ProjectSort.allCases) { item in Text(item.title).tag(item) }
                         }.pickerStyle(.segmented).labelsHidden().frame(width: 264).accessibilityIdentifier("project-sort")
                     }.font(.system(size: 11))
-                    Text("自动识别包含 Git 或语言工程清单的项目根目录，汇总其总占用与可识别构建缓存占用。勾选缓存后仍需在清理建议页确认才移入废纸篓。")
+                    Text("自动识别包含 Git 或语言工程清单的项目根目录，汇总其总占用与可识别构建缓存占用。勾选缓存后仍需在系统清理页确认才移入废纸篓。")
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                 }
@@ -380,15 +903,16 @@ struct ProjectsPage: View {
                     ForEach(model.projects) { project in
                         DiskInteractiveRow(horizontalPadding: 8, verticalPadding: 10) {
                             HStack(alignment: .top, spacing: 12) {
-                                Image(systemName: "hammer.circle.fill")
-                                    .font(.system(size: 20))
-                                    .foregroundStyle(DiskTheme.accent)
-                                    .frame(width: 28)
-                                    .padding(.top, 2)
+                                ModuleIconBadge(
+                                    symbol: "hammer.fill",
+                                    primary: DiskTheme.teal,
+                                    secondary: DiskTheme.accent,
+                                    size: 32
+                                )
                                 VStack(alignment: .leading, spacing: 5) {
                                     HStack(spacing: 6) {
                                         Text(project.name).font(.system(size: 13, weight: .semibold))
-                                        Tag(text: project.markers.prefix(2).joined(separator: " · "), color: .teal)
+                                        Tag(text: project.markers.prefix(2).joined(separator: " · "), color: DiskTheme.teal)
                                         if let ts = project.modifiedAt, ts <= Int64(Date().timeIntervalSince1970) - 90 * 86_400 {
                                             Tag(text: "久未活跃", color: .orange)
                                         }
@@ -436,16 +960,16 @@ struct ProjectsPage: View {
                                 Spacer()
                                 VStack(alignment: .trailing, spacing: 6) {
                                     Text(DiskFormat.bytes(project.allocated))
-                                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                                        .font(.system(size: 14, weight: .bold, design: .rounded))
                                         .monospacedDigit()
                                     HStack(spacing: 8) {
                                         if !project.cachePaths.isEmpty && !model.isExternalVolume {
-                                            Button("前往清理建议") { model.selectProjectCaches(project) }
+                                            Button("前往系统清理") { model.selectProjectCaches(project) }
                                                 .buttonStyle(DiskButtonStyle(kind: .quiet))
                                                 .font(.system(size: 10))
                                                 .foregroundStyle(DiskTheme.purple)
                                         }
-                                        Button("概览中查看") { model.browseProject(project) }
+                                        Button("空间透镜查看") { model.browseProject(project) }
                                             .buttonStyle(DiskButtonStyle(kind: .quiet))
                                             .font(.system(size: 10))
                                             .foregroundStyle(DiskTheme.accent)
@@ -459,7 +983,7 @@ struct ProjectsPage: View {
                         }
                         .onTapGesture { model.browseProject(project) }
                         .contextMenu {
-                            Button("概览中查看") { model.browseProject(project) }
+                            Button("空间透镜查看") { model.browseProject(project) }
                             Button("在 Finder 中显示") { model.reveal(project.path) }
                             Button("复制路径") { model.copyPath(project.path) }
                         }

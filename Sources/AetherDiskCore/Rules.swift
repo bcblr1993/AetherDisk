@@ -23,17 +23,27 @@ public enum RuleCatalog {
             "/.docker/scout/sbom", "/.npm/_cacache", "/.nvm/.cache",
             "/.cache/go-build", "/.cache/pip/http-v2", "/.cache/uv", "/.gradle/caches",
             "/.cargo/registry/cache", "/.pnpm-store", "/.bun/install/cache", "/.yarn/berry/cache",
-            "/Library/Caches/CocoaPods", "/.pub-cache", "/.sbt/boot", "/.ivy2/cache",
-            "/.cache/huggingface/hub", "/.cache/playwright",
+            "/Library/Caches/CocoaPods", "/Library/Caches/Homebrew", "/.pub-cache", "/.sbt/boot", "/.ivy2/cache",
+            "/.cache/huggingface/hub", "/.cache/huggingface/transformers", "/.cache/playwright",
             "/.cache/torch", "/.cache/ms-playwright", "/.cache/puppeteer", "/.cache/pre-commit",
             "/.cache/bazel", "/.cache/electron", "/.cache/cypress",
+            "/.cache/deno", "/.cache/prisma", "/.cache/turbo",
+            "/.cache/zig", "/.cache/sccache", "/.cache/ccache",
+            "/.cache/JetBrains", "/Library/Caches/JetBrains",
             "/Library/Application Support/Claude/Cache", "/Library/Application Support/Claude/Code Cache",
             "/Library/Application Support/Code/Cache", "/Library/Application Support/Code/CachedData",
-            "/Library/Application Support/Cursor/Cache", "/Library/Application Support/Cursor/CachedData"
+            "/Library/Application Support/Cursor/Cache", "/Library/Application Support/Cursor/CachedData",
+            "/Library/Application Support/Windsurf/Cache", "/Library/Application Support/Windsurf/CachedData"
         ]
         if exact.contains(where: { path == h + $0 }) { return .compiler }
+        let lowerLeaf = url.lastPathComponent.lowercased()
+        if lowerLeaf.hasPrefix("com.aethernative.aetherdisk") { return nil }
         let prefix = h + "/Library/Caches/"
         if path.hasPrefix(prefix), !path.dropFirst(prefix.count).contains("/") { return .browser }
+        let logsPrefix = h + "/Library/Logs/"
+        if path.hasPrefix(logsPrefix), !path.dropFirst(logsPrefix.count).contains("/"), !lowerLeaf.isEmpty { return .logs }
+        let savedStatePrefix = h + "/Library/Saved Application State/"
+        if path.hasPrefix(savedStatePrefix), !path.dropFirst(savedStatePrefix.count).contains("/"), lowerLeaf.hasSuffix(".savedstate") { return .savedState }
         let parent = url.deletingLastPathComponent()
         func marker(_ names: [String], in dir: URL = parent) -> Bool {
             names.contains { regular(dir.appendingPathComponent($0).path) }

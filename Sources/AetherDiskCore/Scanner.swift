@@ -376,6 +376,7 @@ private final class ScanWorker: @unchecked Sendable {
                 return node
             }
             node.modifiedAt = bulk.modifiedAt
+            node.accessedAt = bulk.accessedAt > 0 ? bulk.accessedAt : nil
             node.protection = RuleCatalog.protection(name: bulk.name, directory: false)
             node.kind = .file
             state.pendingFiles += 1
@@ -422,6 +423,7 @@ private final class ScanWorker: @unchecked Sendable {
             return node
         }
         node.modifiedAt = Int64(st.st_mtimespec.tv_sec)
+        node.accessedAt = Int64(st.st_atimespec.tv_sec)
         node.protection = RuleCatalog.protection(name: url.lastPathComponent, directory: type == S_IFDIR)
         if type == S_IFREG {
             node.kind = .file
@@ -586,6 +588,9 @@ private final class ScanWorker: @unchecked Sendable {
         parent.fileCount += child.fileCount
         if let childModified = child.modifiedAt {
             parent.modifiedAt = max(parent.modifiedAt ?? childModified, childModified)
+        }
+        if let childAccessed = child.accessedAt {
+            parent.accessedAt = max(parent.accessedAt ?? childAccessed, childAccessed)
         }
         parent.protection.formUnion(child.protection)
         parent.restricted = parent.restricted || child.restricted

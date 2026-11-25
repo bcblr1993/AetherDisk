@@ -75,6 +75,21 @@ struct DiskSettings: View {
                             .foregroundStyle(.secondary)
                     }
                     Divider().opacity(0.6)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("低空间阈值提醒").font(.system(size: 12, weight: .medium))
+                        Picker("低空间阈值提醒", selection: $model.lowSpaceThresholdGiB) {
+                            ForEach(LowSpaceThresholdGiB.allCases) { threshold in
+                                Text(threshold.title).tag(threshold.rawValue)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .accessibilityIdentifier("low-space-threshold-picker")
+                        Text("低于所选阈值时在智能护理、性能优化与菜单栏显示只读预警，绝不触发自动清理。")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    Divider().opacity(0.6)
                     HStack(spacing: 10) {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 6) {
@@ -137,10 +152,9 @@ struct DiskSettings: View {
             CleanupRiskNotice()
             Label("扫描记录保存在本机，清理前始终需要确认。", systemImage: "lock.shield").font(.system(size: 11)).foregroundStyle(.secondary)
         }
-        .padding(24)
+        .padding(8)
         .frame(maxWidth: 760, alignment: .leading)
         .frame(maxWidth: .infinity)
-        .background(DiskTheme.background)
         .buttonStyle(DiskButtonStyle())
     }
 }
